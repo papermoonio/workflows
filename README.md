@@ -44,7 +44,11 @@ This repository provides a set of Python scripts to automatically compile your p
    - Each category tags should be separated by a comma, and if the category name is two or more words use a hyphen - 
    - snippet files called with (`--8<-- 'path/to/snippet'`), should be places in the `.snippets` folder
 
-4. **Run the Scripts**  
+4. **Workflow modification**
+   - If you use the `transfor_tables` script, make sure to update your workflow to install `beautifulsoup4`
+   - `pip install pyyaml requests beautifulsoup4`
+
+5. **Run the Scripts**  
    - From the repository root (or wherever the scripts are located), run:
      ```bash
      python3 generate_llms.py
@@ -53,7 +57,7 @@ This repository provides a set of Python scripts to automatically compile your p
      - Build `llms-full.txt` and `llms.txt` in your docs folder (via **generate_llms_standard**).
      - Build category-based `.txt` files in `docs/llms-files` (via **generate_llms_by_category**).
 
-5. **Review Outputs**  
+6. **Review Outputs**  
    - `llms-full.txt`: All docs in one file, suitable for uploading to an LLM context window (or an embedding pipeline).
    - `llms-<category>.txt`: Each top-level category you defined in `llms_config.json` gets a dedicated file.
 
