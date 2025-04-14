@@ -1,7 +1,3 @@
-# Wormhole-specific input
-docs_repo = 'wormhole-docs'
-docs_url = 'https://wormhole.com/docs/'
-
 import yaml
 import os
 import re
@@ -19,14 +15,17 @@ PROJECT_NAME = config["projectName"]
 PROJECT_URL = config["projectUrl"]
 PROJECT_DESCRIPTION = config["projectDescription"]
 
+# Adjust these to your repo’s name/layout
+docs_repo = 'docs'  # folder name where your .md/.mdx files live
+docs_url = 'https://example.com/docs/' 
+
 # Set the base directory to the root of docs
 base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 docs_dir = os.path.join(base_dir, docs_repo)
 yaml_dir = os.path.join(base_dir, docs_repo, 'variables.yml')
 output_file = os.path.join(docs_dir, 'llms-full.txt')
 snippet_dir = os.path.join(docs_dir, '.snippets')
-# GitHub raw URL base (instead of website)
-raw_base_url = "https://raw.githubusercontent.com/wormhole-foundation/wormhole-docs/refs/heads/main"
+RAW_BASE_URL = config["raw_base_url"] 
 
 # Regex to find lines like: --8<-- 'code/build/applications/...' and --8<-- 'http....'
 SNIPPET_REGEX = r"--8<--\s*['\"](https?://[^'\"]+|[^'\"]+)['\"]"
@@ -78,7 +77,7 @@ def build_index_section(files):
 
         # Use the raw GitHub URL directly with the .md/.mdx file intact
         rel_path = os.path.relpath(file, docs_dir)
-        raw_url = f"{raw_base_url}/{rel_path.replace(os.sep, '/')}"
+        raw_url = f"{RAW_BASE_URL}/{rel_path.replace(os.sep, '/')}"
         section += f"Doc-Page: {raw_url}\n"
     return section
 
@@ -251,7 +250,7 @@ def generate_llms_structure_txt(files):
 
         # Use the raw GitHub URL directly with the .md/.mdx file intact
         rel_path = os.path.relpath(file, docs_dir)
-        doc_url = f"{raw_base_url}/{rel_path.replace(os.sep, '/')}"
+        doc_url = f"{RAW_BASE_URL}/{rel_path.replace(os.sep, '/')}"
 
         structure_lines.append(f"- [{title}]({doc_url}): {description}")
 
