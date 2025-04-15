@@ -17,13 +17,13 @@ PROJECT_DESCRIPTION = config["projectDescription"]
 
 # Adjust these to your repo’s name/layout
 docs_repo = 'docs'  # folder name where your .md/.mdx files live
-docs_url = 'https://example.com/docs/' 
+docs_url = 'https://example.com/docs/' # url to your docs
 
 # Set the base directory to the root of docs
 base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 docs_dir = os.path.join(base_dir, docs_repo)
 yaml_dir = os.path.join(base_dir, docs_repo, 'variables.yml')
-output_file = os.path.join(docs_dir, 'llms-full.txt')
+output_file = os.path.join(docs_dir, 'llms-full.txt') ## RENAME to llms-full
 snippet_dir = os.path.join(docs_dir, '.snippets')
 RAW_BASE_URL = config["raw_base_url"] 
 
@@ -112,7 +112,7 @@ def fetch_local_snippet(snippet_ref, snippet_directory):
 
     with open(absolute_snippet_path, 'r', encoding='utf-8') as snippet_file:
         snippet_content = snippet_file.read()
-        snippet_content = transform_html_tables_to_markdown(snippet_content)
+        snippet_content = transform_html_tables_to_markdown(snippet_content) ## HTML tables to markdown
 
     if line_start is not None and line_end is not None:
         lines = snippet_content.split('\n')
@@ -265,7 +265,7 @@ def generate_standard_llms():
     yaml_file = load_yaml(yaml_dir)
 
     # Header
-    llms_content = f"# {PROJECT_NAME} llms-full.txt\n"
+    llms_content = f"# {PROJECT_NAME} llms-full.txt\n" ## RENAME to llms-full
     llms_content += f"{PROJECT_NAME}. {PROJECT_DESCRIPTION}\n\n"
     llms_content += "## Generated automatically. Do not edit directly.\n\n"
     llms_content += f"Documentation: {docs_url}\n\n"
@@ -280,7 +280,7 @@ def generate_standard_llms():
     with open(output_file, 'w', encoding='utf-8') as output:
         output.write(llms_content)
 
-    print(f"llms-full.txt created or updated at: {output_file}")
+    print(f"llms-full.txt created or updated at: {output_file}") ## RENAME to llms-full
 
     # generate to llms.txt
     generate_llms_structure_txt(files)
