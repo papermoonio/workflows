@@ -1,6 +1,6 @@
 # LLM Documentation Generation Scripts
 
-This repository provides a set of Python scripts to automatically compile your project’s Markdown documentation into files that are more easily consumed by large language models (LLMs). This helps you build advanced developer assistance and in-depth context for ChatGPT or similar AI tools.
+This repository provides a set of Python scripts to automatically compile your project’s Markdown documentation into files that are more easily consumed by large language models (LLMs). This helps build advanced developer assistance and in-depth context for ChatGPT or similar AI tools.
 
 ## Contents
 
@@ -13,7 +13,7 @@ This repository provides a set of Python scripts to automatically compile your p
   2. **Category Generation** (splits docs by categories defined in `llms_config.json`)
 
 - **`generate_llms_standard.py`**  
-  Crawls your documentation folder (by default `docs/`), processes any snippet includes, and builds:
+  Crawls your documentation folder (by default `docs/`), processes any snippet included, and builds:
   - `llms-full.txt`: A single, large text file containing all doc content
   - `llms.txt`: A simpler outline of pages.
 
@@ -33,7 +33,7 @@ This repository provides a set of Python scripts to automatically compile your p
 
 1. **Adjust `llms_config.json`**  
   - Set `projectName`, `projectUrl`, `raw_base_url`, etc
-  - Define any “categories” or “sharedCategories” you plan to use\
+  - Define any “categories” or “sharedCategories” you plan to use
   - `sectionPriority` tags are inferred from your url so adjust accordingly 
 
 2. **Update `generate_llms_standard.py`**  
@@ -52,18 +52,18 @@ This repository provides a set of Python scripts to automatically compile your p
   - Each category tags should be separated by a comma, and if the category name is two or more words use a hyphen - 
   - Snippet files called with (`--8<-- 'path/to/snippet'`), should be places in the `.snippets` folder
   - TIP: Start by tagging a few pages for a few categories to test the functionality of the script until it works, once it does proceed to tag everything
-  - Example Categpry tagging 
-  ```bash
-  ---
-  title: "Title"
-  description: "Description"
-  categories: Core, Api, Advanced-Topics
-  ---
-  ```
+  - Example Category tagging 
+    ```bash
+    ---
+    title: "Title"
+    description: "Description"
+    categories: Core, Advanced-Topics
+    ---
+    ```
 
 4. **Workflow modification**
   - If you use the `transfor_tables` script, make sure to update your `check-llms.yml` workflow to install `beautifulsoup4`
-  - In the Install dependencies section `pip install pyyaml requests beautifulsoup4`
+    - In the Install dependencies section `pip install pyyaml requests beautifulsoup4`
 
 5. **Run the Scripts**  
   - From the repository root (or wherever the scripts are located), run:
