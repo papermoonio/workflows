@@ -1,0 +1,150 @@
+name: 'Link Check for Documentation Sites'
+
+on:
+  # Runs every day at midnight UTC (00:00).
+  schedule:
+    - cron: '0 12 * * *'
+  # Allows you to run this workflow manually from the Actions tab.
+  workflow_dispatch:
+    inputs:
+      selected_project:
+        description: 'Select a specific project (optional)'
+        required: false
+        type: choice
+        options:
+          - All
+          - Tanssi
+          - Moonbeam
+          - Wormhole
+          - kluster.ai
+          - Polkadot
+
+jobs:
+  generate-matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - name: Set filtered matrix
+        id: set-matrix
+        run: |
+          selected="${{ github.event.inputs.selected_project }}"
+          
+          all_projects='[
+            {"mkdocs_repo":"papermoonio/kluster-mkdocs", "docs_repo":"kluster-ai/docs", "mkdocs_repo_name":"kluster-mkdocs", "docs_repo_name":"kluster-docs", "label":"kluster.ai"},
+            {"mkdocs_repo":"papermoonio/polkadot-mkdocs", "docs_repo":"polkadot-developers/polkadot-docs", "mkdocs_repo_name":"polkadot-mkdocs", "docs_repo_name":"polkadot-docs", "label":"Polkadot"},
+            {"mkdocs_repo":"papermoonio/moonbeam-mkdocs", "docs_repo":"moonbeam-foundation/moonbeam-docs", "mkdocs_repo_name":"moonbeam-mkdocs", "docs_repo_name":"moonbeam-docs", "label":"Moonbeam"},
+            {"mkdocs_repo":"papermoonio/tanssi-mkdocs", "docs_repo":"moondance-labs/tanssi-docs", "mkdocs_repo_name":"tanssi-mkdocs", "docs_repo_name":"tanssi-docs", "label":"Tanssi"},
+            {"mkdocs_repo":"papermoonio/wormhole-mkdocs", "docs_repo":"wormhole-foundation/wormhole-docs", "mkdocs_repo_name":"wormhole-mkdocs", "docs_repo_name":"wormhole-docs", "label":"Wormhole"}
+          ]'
+
+          if [ -z "$selected" ] || [ "$selected" == "All" ]; then
+            filtered="$all_projects"
+          else
+            filtered=$(echo "$all_projects" | jq "[.[] | select(.label == \"$selected\")]")
+          fi
+
+          echo "matrix=$filtered" >> $GITHUB_OUTPUT
+        shell: bash
+
+  check-links:
+    needs: generate-matrix
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJson(needs.generate-matrix.outputs.matrix) }}
+    steps:
+      # Check out the MkDocs project repository into a specific directory.
+      - name: 'Checkout MkDocs Repo for ${{ matrix.mkdocs_repo_name }}'
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ matrix.mkdocs_repo }}
+          path: ${{ matrix.mkdocs_repo_name }}
+
+      # Check out the corresponding documentation content repo into a subdirectory.
+      - name: 'Checkout Docs Content Repo for ${{ matrix.docs_repo_name }}'
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ matrix.docs_repo }}
+          path: '${{ matrix.mkdocs_repo_name}}/${{ matrix.docs_repo_name}}'
+
+      # Set up Python environment.
+      - name: 'Set up Python'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      # Install Python dependencies from requirements.txt.
+      - name: 'Install dependencies'
+        working-directory: ${{ matrix.mkdocs_repo_name }}
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # Install MkDocs and the link checker plugin.
+      - name: 'Build MkDocs site'
+        working-directory: ${{ matrix.mkdocs_repo_name }}
+        run: mkdocs build -d site
+
+      # Prepare arguments for the link checker.
+      - name: Prepare Lychee Arguments
+        id: lychee_args
+        working-directory: ${{ matrix.mkdocs_repo_name }}
+        run: |
+          ARGS="--verbose --no-progress --accept 429,403"
+          if [[ -f ".urlignore" ]]; then
+            echo "Found .urlignore file. Adding to lychee arguments."
+            ARGS="$ARGS --exclude-file ./${{ matrix.mkdocs_repo_name }}/.urlignore"
+          fi
+          echo "args=$ARGS" >> $GITHUB_OUTPUT
+
+      # Run the link checker (lychee) on the built MkDocs site.
+      - name: 'Run Link Checker (lychee)'
+        id: lychee
+        uses: lycheeverse/lychee-action@v2.4.1
+        with:
+          args: >
+            ${{ steps.lychee_args.outputs.args }}
+            './${{ matrix.mkdocs_repo_name }}/site/**/*.html'
+          output: ./${{ matrix.mkdocs_repo_name }}/lychee-report.md
+          fail: true
+        continue-on-error: true
+
+      # If the link checker fails, read the report and create a GitHub issue.
+      - name: 'Read Link Checker Report'
+        if: steps.lychee.outcome == 'failure'
+        id: report
+        run: |
+          report_body=$(cat ./${{ matrix.mkdocs_repo_name }}/lychee-report.md)
+          {
+            echo "body<<EOF"
+            echo "### 🚨 Broken Links Detected in ${{ matrix.mkdocs_repo_name }} Docs"
+            echo ""
+            echo "The scheduled link checker has found one or more broken links."
+            echo "This issue was automatically generated by the [central docs workflow](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})."
+            echo ""
+            echo "---"
+            echo ""
+            echo "#### 📝 Link Checker Report:"
+            echo ""
+            echo "${report_body}"
+            echo ""
+            echo "---"
+            echo "#### Next Steps"
+            echo "1.  **Investigate**: Check if the links are temporarily down or permanently gone."
+            echo "2.  **Fix**: Update the source markdown files in the \`${{ matrix.docs_repo }}\` repository."
+            echo "3.  **Close**: Once fixed, this issue can be closed."
+            echo "EOF"
+          } >> $GITHUB_OUTPUT
+
+      # Create a GitHub issue if broken links are detected.
+      - name: 'Create GitHub Issue in ${{ matrix.docs_repo }}'
+        if: steps.lychee.outcome == 'failure'
+        uses: actions/create-issue@v2
+        with:
+          token: ${{ secrets.GH_404_CHECKER }}
+          repository: ${{ matrix.docs_repo }}
+          title: "Broken Links Detected on $(date +'%Y-%m-%d')"
+          body: ${{ steps.report.outputs.body }}
