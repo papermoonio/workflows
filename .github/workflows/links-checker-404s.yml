@@ -27,21 +27,22 @@ jobs:
     steps:
       - name: Set filtered matrix
         id: set-matrix
+        shell: bash
         run: |
           selected="${{ github.event.inputs.selected_project }}"
-          
+
           all_projects='[
-            {"mkdocs_repo":"papermoonio/kluster-mkdocs", "docs_repo":"kluster-ai/docs", "mkdocs_repo_name":"kluster-mkdocs", "docs_repo_name":"kluster-docs", "label":"kluster.ai"},
-            {"mkdocs_repo":"papermoonio/polkadot-mkdocs", "docs_repo":"polkadot-developers/polkadot-docs", "mkdocs_repo_name":"polkadot-mkdocs", "docs_repo_name":"polkadot-docs", "label":"Polkadot"},
-            {"mkdocs_repo":"papermoonio/moonbeam-mkdocs", "docs_repo":"moonbeam-foundation/moonbeam-docs", "mkdocs_repo_name":"moonbeam-mkdocs", "docs_repo_name":"moonbeam-docs", "label":"Moonbeam"},
-            {"mkdocs_repo":"papermoonio/tanssi-mkdocs", "docs_repo":"moondance-labs/tanssi-docs", "mkdocs_repo_name":"tanssi-mkdocs", "docs_repo_name":"tanssi-docs", "label":"Tanssi"},
-            {"mkdocs_repo":"papermoonio/wormhole-mkdocs", "docs_repo":"wormhole-foundation/wormhole-docs", "mkdocs_repo_name":"wormhole-mkdocs", "docs_repo_name":"wormhole-docs", "label":"Wormhole"}
+            {"mkdocs_repo":"papermoonio/kluster-mkdocs","docs_repo":"kluster-ai/docs","mkdocs_repo_name":"kluster-mkdocs","docs_repo_name":"kluster-docs","label":"kluster.ai"},
+            {"mkdocs_repo":"papermoonio/polkadot-mkdocs","docs_repo":"polkadot-developers/polkadot-docs","mkdocs_repo_name":"polkadot-mkdocs","docs_repo_name":"polkadot-docs","label":"Polkadot"},
+            {"mkdocs_repo":"papermoonio/moonbeam-mkdocs","docs_repo":"moonbeam-foundation/moonbeam-docs","mkdocs_repo_name":"moonbeam-mkdocs","docs_repo_name":"moonbeam-docs","label":"Moonbeam"},
+            {"mkdocs_repo":"papermoonio/tanssi-mkdocs","docs_repo":"moondance-labs/tanssi-docs","mkdocs_repo_name":"tanssi-mkdocs","docs_repo_name":"tanssi-docs","label":"Tanssi"},
+            {"mkdocs_repo":"papermoonio/wormhole-mkdocs","docs_repo":"wormhole-foundation/wormhole-docs","mkdocs_repo_name":"wormhole-mkdocs","docs_repo_name":"wormhole-docs","label":"Wormhole"}
           ]'
 
           if [ -z "$selected" ] || [ "$selected" == "All" ]; then
             filtered="$all_projects"
           else
-            filtered=$(echo "$all_projects" | jq "[.[] | select(.label == \"$selected\")]")
+            filtered=$(echo "$all_projects" | jq -c "[.[] | select(.label == \"$selected\")]")
           fi
 
           echo "matrix=$filtered" >> $GITHUB_OUTPUT
