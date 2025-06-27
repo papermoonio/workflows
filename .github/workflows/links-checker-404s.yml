@@ -46,7 +46,6 @@ jobs:
           fi
 
           echo "matrix=$filtered" >> $GITHUB_OUTPUT
-        shell: bash
 
   check-links:
     needs: generate-matrix
