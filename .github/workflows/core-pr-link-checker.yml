@@ -1,0 +1,76 @@
+name: 'Reusable Link Check Workflow'
+
+on:
+  workflow_call:
+    inputs:
+      mkdocs_repo:
+        required: true
+        type: string
+      docs_repo:
+        required: true
+        type: string
+      mkdocs_repo_name:
+        required: true
+        type: string
+      docs_repo_name:
+        required: true
+        type: string
+    secrets:
+      GH_TOKEN:
+        required: true
+
+jobs:
+  check-links:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 'Checkout MkDocs Repo'
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.mkdocs_repo }}
+          path: ${{ inputs.mkdocs_repo_name }}
+
+      - name: 'Checkout Docs Repo'
+        if: ${{ inputs.docs_repo != inputs.mkdocs_repo }}
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.docs_repo }}
+          path: '${{ inputs.mkdocs_repo_name}}/${{ inputs.docs_repo_name}}'
+
+      - name: 'Set up Python'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: 'Install dependencies'
+        working-directory: ${{ inputs.mkdocs_repo_name }}
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: 'Build MkDocs site'
+        working-directory: ${{ inputs.mkdocs_repo_name }}
+        run: |
+          mkdocs build -d site
+
+      - name: Prepare Lychee Arguments
+        id: lychee_args
+        working-directory: ${{ inputs.mkdocs_repo_name }}
+        run: |
+          ARGS="--verbose --no-progress --accept 429,403"
+          if [[ -f ".urlignore" ]]; then
+            echo "Found .urlignore file. Adding to lychee arguments."
+            ARGS="$ARGS --exclude-file $(pwd)/.urlignore"
+          fi
+          echo "args=$ARGS" >> $GITHUB_OUTPUT
+
+      - name: 'Run Link Checker (lychee)'
+        id: lychee
+        uses: lycheeverse/lychee-action@v2.4.1
+        with:
+          args: >
+            ${{ steps.lychee_args.outputs.args }}
+            './${{ inputs.mkdocs_repo_name }}/site/**/*.html'
+          fail: false
+        continue-on-error: false
+
