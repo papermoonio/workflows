@@ -155,7 +155,7 @@ jobs:
             echo "---"
             echo "#### Next Steps"
             echo "1.  **Investigate**: Check if the links are temporarily down or permanently gone."
-            echo "2.  **Fix**: Update the source markdown files in the \`${{ matrix.docs_repo }}\` repository."
+            echo "2.  **Fix**: Update the source markdown files in this repository."
             echo "3.  **Close**: Once fixed, this issue can be closed."
             echo "EOF"
 
@@ -164,57 +164,14 @@ jobs:
             echo "EOF"
           } >> $GITHUB_OUTPUT
 
-      # Check previous issues to see if this was reported
-      - name: Check for Existing Issue and Differences
-        if: steps.lychee.outcome == 'failure'
-        id: issue_check
-        env:
-          GH_TOKEN: ${{ steps.select_token.outputs.token }}
-          REPO: ${{ matrix.docs_repo }}
-        run: |
-          echo "Checking for existing issue in $REPO"
-
-          # Fetch latest open issue with label
-          LATEST_ISSUE_BODY=$(gh issue list --repo "$REPO" --label "D0 - Broken Links" --state open --limit 1 --json body -q '.[0].body' || echo "")
-
-          if [ -n "$LATEST_ISSUE_BODY" ]; then
-            echo "Existing issue found. Comparing reports..."
-
-            # Extract report section from the body
-            LATEST_REPORT=$(echo "$LATEST_ISSUE_BODY" | awk '/#### 📝 Link Checker Report:/,/---/{if (!/#### 📝 Link Checker Report:/ && !/---/) print}' | sed 's/^\s*//;s/\s*$//')
-
-            # Get current report
-            CURRENT_REPORT=$(echo "${{ steps.report.outputs.report_content }}" | sed 's/^\s*//;s/\s*$//')
-
-            # Compare using diff
-            if diff -q <(echo "$LATEST_REPORT") <(echo "$CURRENT_REPORT") > /dev/null; then
-              echo "No changes detected in the link checker report. No new issue will be created."
-              echo "create_issue=false" >> $GITHUB_OUTPUT
-            else
-              echo "Changes detected. A new issue will be created."
-              echo "create_issue=true" >> $GITHUB_OUTPUT
-            fi
-          else
-            echo "No existing open issue found. A new issue will be created."
-            echo "create_issue=true" >> $GITHUB_OUTPUT
-          fi
-
       # Create a GitHub issue if broken links are detected.
       - name: Create Issue without Label
         id: create_issue
         env:
           GH_TOKEN: ${{ steps.select_token.outputs.token }}
         run: |
-          ISSUE_URL=$(gh issue create \
+          gh issue create \
             --repo "${{ matrix.docs_repo }}" \
             --title "Broken Links Detected on $(date +'%Y-%m-%d')" \
-            --body "${{ steps.report.outputs.body }}" | tail -n 1)
-          echo "issue_url=$ISSUE_URL" >> $GITHUB_OUTPUT
+            --body "${{ steps.report.outputs.body }}"
       
-       # Create a GitHub issue if broken links are detected.
-      - name: Add Label to Issue
-        env:
-            GH_TOKEN: ${{ steps.select_token.outputs.token }}
-        run: |
-          ISSUE_NUMBER=$(basename "${{ steps.create_issue.outputs.issue_url }}")
-          gh issue edit "$ISSUE_NUMBER" --repo "${{ matrix.docs_repo }}" --add-label "D0 - Broken Links"
