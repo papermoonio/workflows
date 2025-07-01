@@ -19,6 +19,20 @@ on:
           - kluster.ai
           - Polkadot
 
+You're running into a security feature of GitHub Actions. The warning "Skip output 'matrix' since it may contain secret" is the key to understanding the problem.
+
+GitHub Actions automatically redacts any string in the logs or job outputs that matches a secret you've defined. Because your matrix output now correctly includes the secret token, GitHub sees this and replaces the entire output with *** to prevent the secret from being exposed. This "redacted" (effectively empty) output is then passed to the check-links job, causing the fromJson function to fail.
+
+The solution is to restructure the workflow so that the secret token is never part of the matrix output. The matrix should only contain non-sensitive data. The token can then be selected within the check-links job itself.
+
+✅ The Fix: Separate Secrets from the Matrix
+Here is the updated code for your workflow. It modifies both the generate-matrix and check-links jobs.
+
+1. Updated generate-matrix Job
+This version removes the token key from the JSON object entirely. The output no longer contains any secret values.
+
+YAML
+
 jobs:
   generate-matrix:
     runs-on: ubuntu-latest
@@ -28,40 +42,32 @@ jobs:
       - name: Set filtered matrix
         id: set-matrix
         shell: bash
-        env:
-          GH_TOKEN_DEFAULT: ${{ secrets.GH_404_CHECKER }}
-          GH_TOKEN_TANSSI: ${{ secrets.GH_404_CHECKER_TANSSI }}
         run: |
           selected="${{ github.event.inputs.selected_project || 'All' }}"
-        
-          # Correctly pass shell variables to jq
-          all_projects=$(jq -n \
-            --arg default_token "$GH_TOKEN_DEFAULT" \
-            --arg tanssi_token "$GH_TOKEN_TANSSI" \
-            '[
-              { "mkdocs_repo": "papermoonio/kluster-mkdocs", "docs_repo": "kluster-ai/docs", "mkdocs_repo_name": "kluster-mkdocs", "docs_repo_name": "kluster-docs", "label": "kluster.ai", "token": $default_token },
-              { "mkdocs_repo": "papermoonio/polkadot-mkdocs", "docs_repo": "polkadot-developers/polkadot-docs", "mkdocs_repo_name": "polkadot-mkdocs", "docs_repo_name": "polkadot-docs", "label": "Polkadot", "token": $default_token },
-              { "mkdocs_repo": "papermoonio/moonbeam-mkdocs", "docs_repo": "moonbeam-foundation/moonbeam-docs", "mkdocs_repo_name": "moonbeam-mkdocs", "docs_repo_name": "moonbeam-docs", "label": "Moonbeam", "token": $default_token },
-              { "mkdocs_repo": "papermoonio/tanssi-mkdocs", "docs_repo": "moondance-labs/tanssi-docs", "mkdocs_repo_name": "tanssi-mkdocs", "docs_repo_name": "tanssi-docs", "label": "Tanssi", "token": $tanssi_token },
-              { "mkdocs_repo": "papermoonio/wormhole-mkdocs", "docs_repo": "wormhole-foundation/wormhole-docs", "mkdocs_repo_name": "wormhole-mkdocs", "docs_repo_name": "wormhole-docs", "label": "Wormhole", "token": $default_token }
-            ]')
-        
+
+          # The 'token' key has been removed from this JSON object
+          all_projects=$(jq -n '
+            [
+              { "mkdocs_repo": "papermoonio/kluster-mkdocs", "docs_repo": "kluster-ai/docs", "mkdocs_repo_name": "kluster-mkdocs", "docs_repo_name": "kluster-docs", "label": "kluster.ai" },
+              { "mkdocs_repo": "papermoonio/polkadot-mkdocs", "docs_repo": "polkadot-developers/polkadot-docs", "mkdocs_repo_name": "polkadot-mkdocs", "docs_repo_name": "polkadot-docs", "label": "Polkadot" },
+              { "mkdocs_repo": "papermoonio/moonbeam-mkdocs", "docs_repo": "moonbeam-foundation/moonbeam-docs", "mkdocs_repo_name": "moonbeam-mkdocs", "docs_repo_name": "moonbeam-docs", "label": "Moonbeam" },
+              { "mkdocs_repo": "papermoonio/tanssi-mkdocs", "docs_repo": "moondance-labs/tanssi-docs", "mkdocs_repo_name": "tanssi-mkdocs", "docs_repo_name": "tanssi-docs", "label": "Tanssi" },
+              { "mkdocs_repo": "papermoonio/wormhole-mkdocs", "docs_repo": "wormhole-foundation/wormhole-docs", "mkdocs_repo_name": "wormhole-mkdocs", "docs_repo_name": "wormhole-docs", "label": "Wormhole" }
+            ]
+          ')
+
           if [ "$selected" == "All" ]; then
             filtered="$all_projects"
           else
-            # Use --arg for the selected project as well for safety
             filtered=$(echo "$all_projects" | jq -c --arg sel "$selected" '[.[] | select(.label == $sel)]')
           fi
-        
+
           if [ -z "$filtered" ] || [ "$filtered" = "[]" ]; then
             echo "❌ Error: No projects matched filter '$selected'."
             exit 1
           fi
-        
-          filtered_single_line=$(echo "$filtered" | jq -c '.')
-        
-          echo "matrix=$filtered_single_line" >> "$GITHUB_OUTPUT"
 
+          echo "matrix=$(echo "$filtered" | jq -c '.')" >> "$GITHUB_OUTPUT"
 
   check-links:
     needs: generate-matrix
@@ -69,7 +75,18 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # This fromJson will now work because the input is not redacted
         include: ${{ fromJson(needs.generate-matrix.outputs.matrix) }}
+    steps:
+      # Select the correct token based on the matrix label
+      - name: Select Token
+        id: select_token
+        run: |
+          if [ "${{ matrix.label }}" == "Tanssi" ]; then
+            echo "token=${{ secrets.GH_404_CHECKER_TANSSI }}" >> $GITHUB_OUTPUT
+          else
+            echo "token=${{ secrets.GH_404_CHECKER }}" >> $GITHUB_OUTPUT
+          fi
     steps:
       # Check out the MkDocs project repository into a specific directory.
       - name: 'Checkout MkDocs Repo for ${{ matrix.mkdocs_repo_name }}'
@@ -166,7 +183,7 @@ jobs:
         if: steps.lychee.outcome == 'failure'
         id: issue_check
         env:
-          GH_TOKEN: ${{ matrix.token }}
+          GH_TOKEN: ${{ steps.select_token.outputs.token }}
           REPO: ${{ matrix.docs_repo }}
         run: |
           echo "Checking for existing issue in $REPO"
@@ -200,7 +217,7 @@ jobs:
       - name: Create GitHub Issue in ${{ matrix.docs_repo }}
         if: steps.lychee.outcome == 'failure' && steps.issue_check.outputs.create_issue == 'true'
         env:
-          GH_TOKEN: ${{ matrix.token }}
+          GH_TOKEN: ${{ steps.select_token.outputs.token }}
         run: |
           echo "Creating new GitHub issue in ${{ matrix.docs_repo }}"
           gh issue create \
