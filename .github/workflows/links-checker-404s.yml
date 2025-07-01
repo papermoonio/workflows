@@ -87,7 +87,7 @@ jobs:
           else
             echo "token=${{ secrets.GH_404_CHECKER }}" >> $GITHUB_OUTPUT
           fi
-    steps:
+      
       # Check out the MkDocs project repository into a specific directory.
       - name: 'Checkout MkDocs Repo for ${{ matrix.mkdocs_repo_name }}'
         uses: actions/checkout@v4
@@ -127,7 +127,7 @@ jobs:
         working-directory: ${{ matrix.mkdocs_repo_name }}
         run: |
           ARGS="--verbose --no-progress --accept 429,403"
-          if [[ -f ".urlignore" ]]; then
+          if [[ -f "${{ matrix.mkdocs_repo_name }}/.urlignore" ]]; then
             echo "Found .urlignore file. Adding to lychee arguments."
             ARGS="$ARGS --exclude-file ./${{ matrix.mkdocs_repo_name }}/.urlignore"
           fi
