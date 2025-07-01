@@ -28,23 +28,63 @@ jobs:
       - name: Set filtered matrix
         id: set-matrix
         shell: bash
+        env:
+          GH_TOKEN_DEFAULT: ${{ secrets.GH_404_CHECKER }}
+          GH_TOKEN_TANSSI: ${{ secrets.GH_404_CHECKER_TANSSI }}
         run: |
           selected="${{ github.event.inputs.selected_project }}"
 
-          all_projects='[
-            {"mkdocs_repo":"papermoonio/kluster-mkdocs","docs_repo":"kluster-ai/docs","mkdocs_repo_name":"kluster-mkdocs","docs_repo_name":"kluster-docs","label":"kluster.ai"},
-            {"mkdocs_repo":"papermoonio/polkadot-mkdocs","docs_repo":"polkadot-developers/polkadot-docs","mkdocs_repo_name":"polkadot-mkdocs","docs_repo_name":"polkadot-docs","label":"Polkadot"},
-            {"mkdocs_repo":"papermoonio/moonbeam-mkdocs","docs_repo":"moonbeam-foundation/moonbeam-docs","mkdocs_repo_name":"moonbeam-mkdocs","docs_repo_name":"moonbeam-docs","label":"Moonbeam"},
-            {"mkdocs_repo":"papermoonio/tanssi-mkdocs","docs_repo":"moondance-labs/tanssi-docs","mkdocs_repo_name":"tanssi-mkdocs","docs_repo_name":"tanssi-docs","label":"Tanssi"},
-            {"mkdocs_repo":"papermoonio/wormhole-mkdocs","docs_repo":"wormhole-foundation/wormhole-docs","mkdocs_repo_name":"wormhole-mkdocs","docs_repo_name":"wormhole-docs","label":"Wormhole"}
-          ]'
-          
+          all_projects=$(jq -nc --arg default "$GH_TOKEN_DEFAULT" --arg tanssi "$GH_TOKEN_TANSSI" '
+            [
+              {
+                mkdocs_repo: "papermoonio/kluster-mkdocs",
+                docs_repo: "kluster-ai/docs",
+                mkdocs_repo_name: "kluster-mkdocs",
+                docs_repo_name: "kluster-docs",
+                label: "kluster.ai",
+                token: $default
+              },
+              {
+                mkdocs_repo: "papermoonio/polkadot-mkdocs",
+                docs_repo: "polkadot-developers/polkadot-docs",
+                mkdocs_repo_name: "polkadot-mkdocs",
+                docs_repo_name: "polkadot-docs",
+                label: "Polkadot",
+                token: $default
+              },
+              {
+                mkdocs_repo: "papermoonio/moonbeam-mkdocs",
+                docs_repo: "moonbeam-foundation/moonbeam-docs",
+                mkdocs_repo_name: "moonbeam-mkdocs",
+                docs_repo_name: "moonbeam-docs",
+                label: "Moonbeam",
+                token: $default
+              },
+              {
+                mkdocs_repo: "papermoonio/tanssi-mkdocs",
+                docs_repo: "moondance-labs/tanssi-docs",
+                mkdocs_repo_name: "tanssi-mkdocs",
+                docs_repo_name: "tanssi-docs",
+                label: "Tanssi",
+                token: $tanssi
+              },
+              {
+                mkdocs_repo: "papermoonio/wormhole-mkdocs",
+                docs_repo: "wormhole-foundation/wormhole-docs",
+                mkdocs_repo_name: "wormhole-mkdocs",
+                docs_repo_name: "wormhole-docs",
+                label: "Wormhole",
+                token: $default
+              }
+            ]
+          ')
+
           if [ -z "$selected" ] || [ "$selected" == "All" ]; then
-            filtered=$(echo "$all_projects" | jq -c '.')
+            filtered="$all_projects"
           else
             filtered=$(echo "$all_projects" | jq -c "[.[] | select(.label == \"$selected\")]")
           fi
-          
+
           echo "matrix=$filtered" >> $GITHUB_OUTPUT
 
   check-links:
@@ -150,7 +190,7 @@ jobs:
         if: steps.lychee.outcome == 'failure'
         id: issue_check
         env:
-          GH_TOKEN: ${{ secrets.GH_404_CHECKER }}
+          GH_TOKEN: ${{ matrix.token }}
           REPO: ${{ matrix.docs_repo }}
         run: |
           echo "Checking for existing issue in $REPO"
@@ -184,7 +224,7 @@ jobs:
       - name: Create GitHub Issue in ${{ matrix.docs_repo }}
         if: steps.lychee.outcome == 'failure' && steps.issue_check.outputs.create_issue == 'true'
         env:
-          GH_TOKEN: ${{ secrets.GH_404_CHECKER }}
+          GH_TOKEN: ${{ matrix.token }}
         run: |
           echo "Creating new GitHub issue in ${{ matrix.docs_repo }}"
           gh issue create \
