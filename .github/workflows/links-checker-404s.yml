@@ -118,6 +118,8 @@ jobs:
         id: report
         run: |
           report_body=$(cat ./${{ matrix.mkdocs_repo_name }}/lychee-report.md)
+          report_cleaned=$(echo "$report_body" | sed 's/^\s*//;s/\s*$//')
+          
           {
             echo "body<<EOF"
             echo "### 🚨 Broken Links Detected in ${{ matrix.label }} Docs"
@@ -129,7 +131,7 @@ jobs:
             echo ""
             echo "#### 📝 Link Checker Report:"
             echo ""
-            echo "${report_body}"
+            echo "$report_cleaned"
             echo ""
             echo "---"
             echo "#### Next Steps"
@@ -137,15 +139,56 @@ jobs:
             echo "2.  **Fix**: Update the source markdown files in the \`${{ matrix.docs_repo }}\` repository."
             echo "3.  **Close**: Once fixed, this issue can be closed."
             echo "EOF"
+
+            echo "report_content<<EOF"
+            echo "$report_cleaned"
+            echo "EOF"
           } >> $GITHUB_OUTPUT
+
+      # Check previous issues to see if this was reported
+      - name: Check for Existing Issue and Differences
+        if: steps.lychee.outcome == 'failure'
+        id: issue_check
+        env:
+          GH_TOKEN: ${{ secrets.GH_404_CHECKER }}
+          REPO: ${{ matrix.docs_repo }}
+        run: |
+          echo "Checking for existing issue in $REPO"
+
+          # Fetch latest open issue with label
+          LATEST_ISSUE_BODY=$(gh issue list --repo "$REPO" --label "broken-links" --state open --limit 1 --json body -q '.[0].body' || echo "")
+
+          if [ -n "$LATEST_ISSUE_BODY" ]; then
+            echo "Existing issue found. Comparing reports..."
+
+            # Extract report section from the body
+            LATEST_REPORT=$(echo "$LATEST_ISSUE_BODY" | awk '/#### 📝 Link Checker Report:/,/---/{if (!/#### 📝 Link Checker Report:/ && !/---/) print}' | sed 's/^\s*//;s/\s*$//')
+
+            # Get current report
+            CURRENT_REPORT=$(echo "${{ steps.report.outputs.report_content }}" | sed 's/^\s*//;s/\s*$//')
+
+            # Compare using diff
+            if diff -q <(echo "$LATEST_REPORT") <(echo "$CURRENT_REPORT") > /dev/null; then
+              echo "No changes detected in the link checker report. No new issue will be created."
+              echo "create_issue=false" >> $GITHUB_OUTPUT
+            else
+              echo "Changes detected. A new issue will be created."
+              echo "create_issue=true" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "No existing open issue found. A new issue will be created."
+            echo "create_issue=true" >> $GITHUB_OUTPUT
+          fi
 
       # Create a GitHub issue if broken links are detected.
       - name: Create GitHub Issue in ${{ matrix.docs_repo }}
-        if: steps.lychee.outcome == 'failure'
+        if: steps.lychee.outcome == 'failure' && steps.issue_check.outputs.create_issue == 'true'
         env:
           GH_TOKEN: ${{ secrets.GH_404_CHECKER }}
         run: |
+          echo "Creating new GitHub issue in ${{ matrix.docs_repo }}"
           gh issue create \
             --repo "${{ matrix.docs_repo }}" \
             --title "Broken Links Detected on $(date +'%Y-%m-%d')" \
-            --body "${{ steps.report.outputs.body }}"
+            --body "${{ steps.report.outputs.body }}" \
+            --label "broken-links"
