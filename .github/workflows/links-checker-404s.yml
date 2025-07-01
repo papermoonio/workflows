@@ -200,14 +200,23 @@ jobs:
           fi
 
       # Create a GitHub issue if broken links are detected.
-      - name: Create GitHub Issue in ${{ matrix.docs_repo }}
-        if: steps.lychee.outcome == 'failure' && steps.issue_check.outputs.create_issue == 'true'
+      - name: Create Issue without Label
+        id: create_issue
         env:
           GH_TOKEN: ${{ steps.select_token.outputs.token }}
         run: |
-          echo "Creating new GitHub issue in ${{ matrix.docs_repo }}"
-          gh issue create \
+          ISSUE_URL=$(gh issue create \
             --repo "${{ matrix.docs_repo }}" \
             --title "Broken Links Detected on $(date +'%Y-%m-%d')" \
             --body "${{ steps.report.outputs.body }}" \
-            --label "D0 - Broken Links"
+            --json url \
+            --jq '.url')
+          echo "issue_url=$ISSUE_URL" >> $GITHUB_OUTPUT
+      
+      # Edit issue to add label
+      - name: Add Label to Issue
+        env:
+          GH_TOKEN: ${{ steps.select_token.outputs.token }}
+        run: |
+          ISSUE_NUMBER=$(echo "${{ steps.create_issue.outputs.issue_url }}" | awk -F '/' '{print $NF}')
+          gh issue edit "$ISSUE_NUMBER" --repo "${{ matrix.docs_repo }}" --add-label "D0 - Broken Links"
