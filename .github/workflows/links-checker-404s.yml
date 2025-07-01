@@ -19,20 +19,6 @@ on:
           - kluster.ai
           - Polkadot
 
-You're running into a security feature of GitHub Actions. The warning "Skip output 'matrix' since it may contain secret" is the key to understanding the problem.
-
-GitHub Actions automatically redacts any string in the logs or job outputs that matches a secret you've defined. Because your matrix output now correctly includes the secret token, GitHub sees this and replaces the entire output with *** to prevent the secret from being exposed. This "redacted" (effectively empty) output is then passed to the check-links job, causing the fromJson function to fail.
-
-The solution is to restructure the workflow so that the secret token is never part of the matrix output. The matrix should only contain non-sensitive data. The token can then be selected within the check-links job itself.
-
-✅ The Fix: Separate Secrets from the Matrix
-Here is the updated code for your workflow. It modifies both the generate-matrix and check-links jobs.
-
-1. Updated generate-matrix Job
-This version removes the token key from the JSON object entirely. The output no longer contains any secret values.
-
-YAML
-
 jobs:
   generate-matrix:
     runs-on: ubuntu-latest
