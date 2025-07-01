@@ -32,8 +32,8 @@ jobs:
           GH_TOKEN_DEFAULT: ${{ secrets.GH_404_CHECKER }}
           GH_TOKEN_TANSSI: ${{ secrets.GH_404_CHECKER_TANSSI }}
         run: |
-          selected="${{ github.event.inputs.selected_project }}"
-          
+          selected="${{ github.event.inputs.selected_project || 'All' }}"
+        
           all_projects=$(jq -nc --arg default "$GH_TOKEN_DEFAULT" --arg tanssi "$GH_TOKEN_TANSSI" '
             [
               { mkdocs_repo: "papermoonio/kluster-mkdocs", docs_repo: "kluster-ai/docs", mkdocs_repo_name: "kluster-mkdocs", docs_repo_name: "kluster-docs", label: "kluster.ai", token: $default },
@@ -43,23 +43,22 @@ jobs:
               { mkdocs_repo: "papermoonio/wormhole-mkdocs", docs_repo: "wormhole-foundation/wormhole-docs", mkdocs_repo_name: "wormhole-mkdocs", docs_repo_name: "wormhole-docs", label: "Wormhole", token: $default }
             ]
           ')
-
-          if [ -z "$selected" ] || [ "$selected" == "All" ]; then
+        
+          if [ "$selected" == "All" ]; then
             filtered="$all_projects"
           else
             filtered=$(echo "$all_projects" | jq -c "[.[] | select(.label == \"$selected\")]")
           fi
-
+        
           if [ -z "$filtered" ] || [ "$filtered" = "[]" ]; then
             echo "❌ Error: No projects matched filter '$selected'."
             exit 1
           fi
-
-          # Escape line breaks for GitHub Actions output
+        
           filtered_single_line=$(echo "$filtered" | jq -c '.')
-
-          echo "Filtered matrix: $filtered_single_line"
+        
           echo "matrix=$filtered_single_line" >> "$GITHUB_OUTPUT"
+
 
   check-links:
     needs: generate-matrix
