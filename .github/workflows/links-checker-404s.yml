@@ -208,15 +208,13 @@ jobs:
           ISSUE_URL=$(gh issue create \
             --repo "${{ matrix.docs_repo }}" \
             --title "Broken Links Detected on $(date +'%Y-%m-%d')" \
-            --body "${{ steps.report.outputs.body }}" \
-            --json url \
-            --jq '.url')
+            --body "${{ steps.report.outputs.body }}" | tail -n 1)
           echo "issue_url=$ISSUE_URL" >> $GITHUB_OUTPUT
       
-      # Edit issue to add label
+       # Create a GitHub issue if broken links are detected.
       - name: Add Label to Issue
         env:
-          GH_TOKEN: ${{ steps.select_token.outputs.token }}
+            GH_TOKEN: ${{ steps.select_token.outputs.token }}
         run: |
-          ISSUE_NUMBER=$(echo "${{ steps.create_issue.outputs.issue_url }}" | awk -F '/' '{print $NF}')
+          ISSUE_NUMBER=$(basename "${{ steps.create_issue.outputs.issue_url }}")
           gh issue edit "$ISSUE_NUMBER" --repo "${{ matrix.docs_repo }}" --add-label "D0 - Broken Links"
