@@ -34,20 +34,23 @@ jobs:
         run: |
           selected="${{ github.event.inputs.selected_project || 'All' }}"
         
-          all_projects=$(jq -nc --arg default "$GH_TOKEN_DEFAULT" --arg tanssi "$GH_TOKEN_TANSSI" '
-            [
-              { mkdocs_repo: "papermoonio/kluster-mkdocs", docs_repo: "kluster-ai/docs", mkdocs_repo_name: "kluster-mkdocs", docs_repo_name: "kluster-docs", label: "kluster.ai", token: $default },
-              { mkdocs_repo: "papermoonio/polkadot-mkdocs", docs_repo: "polkadot-developers/polkadot-docs", mkdocs_repo_name: "polkadot-mkdocs", docs_repo_name: "polkadot-docs", label: "Polkadot", token: $default },
-              { mkdocs_repo: "papermoonio/moonbeam-mkdocs", docs_repo: "moonbeam-foundation/moonbeam-docs", mkdocs_repo_name: "moonbeam-mkdocs", docs_repo_name: "moonbeam-docs", label: "Moonbeam", token: $default },
-              { mkdocs_repo: "papermoonio/tanssi-mkdocs", docs_repo: "moondance-labs/tanssi-docs", mkdocs_repo_name: "tanssi-mkdocs", docs_repo_name: "tanssi-docs", label: "Tanssi", token: $tanssi },
-              { mkdocs_repo: "papermoonio/wormhole-mkdocs", docs_repo: "wormhole-foundation/wormhole-docs", mkdocs_repo_name: "wormhole-mkdocs", docs_repo_name: "wormhole-docs", label: "Wormhole", token: $default }
-            ]
-          ')
+          # Correctly pass shell variables to jq
+          all_projects=$(jq -n \
+            --arg default_token "$GH_TOKEN_DEFAULT" \
+            --arg tanssi_token "$GH_TOKEN_TANSSI" \
+            '[
+              { "mkdocs_repo": "papermoonio/kluster-mkdocs", "docs_repo": "kluster-ai/docs", "mkdocs_repo_name": "kluster-mkdocs", "docs_repo_name": "kluster-docs", "label": "kluster.ai", "token": $default_token },
+              { "mkdocs_repo": "papermoonio/polkadot-mkdocs", "docs_repo": "polkadot-developers/polkadot-docs", "mkdocs_repo_name": "polkadot-mkdocs", "docs_repo_name": "polkadot-docs", "label": "Polkadot", "token": $default_token },
+              { "mkdocs_repo": "papermoonio/moonbeam-mkdocs", "docs_repo": "moonbeam-foundation/moonbeam-docs", "mkdocs_repo_name": "moonbeam-mkdocs", "docs_repo_name": "moonbeam-docs", "label": "Moonbeam", "token": $default_token },
+              { "mkdocs_repo": "papermoonio/tanssi-mkdocs", "docs_repo": "moondance-labs/tanssi-docs", "mkdocs_repo_name": "tanssi-mkdocs", "docs_repo_name": "tanssi-docs", "label": "Tanssi", "token": $tanssi_token },
+              { "mkdocs_repo": "papermoonio/wormhole-mkdocs", "docs_repo": "wormhole-foundation/wormhole-docs", "mkdocs_repo_name": "wormhole-mkdocs", "docs_repo_name": "wormhole-docs", "label": "Wormhole", "token": $default_token }
+            ]')
         
           if [ "$selected" == "All" ]; then
             filtered="$all_projects"
           else
-            filtered=$(echo "$all_projects" | jq -c "[.[] | select(.label == \"$selected\")]")
+            # Use --arg for the selected project as well for safety
+            filtered=$(echo "$all_projects" | jq -c --arg sel "$selected" '[.[] | select(.label == $sel)]')
           fi
         
           if [ -z "$filtered" ] || [ "$filtered" = "[]" ]; then
