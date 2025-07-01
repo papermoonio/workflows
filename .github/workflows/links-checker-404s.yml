@@ -156,7 +156,7 @@ jobs:
           echo "Checking for existing issue in $REPO"
 
           # Fetch latest open issue with label
-          LATEST_ISSUE_BODY=$(gh issue list --repo "$REPO" --label "broken-links" --state open --limit 1 --json body -q '.[0].body' || echo "")
+          LATEST_ISSUE_BODY=$(gh issue list --repo "$REPO" --label "D0 - Broken Links" --state open --limit 1 --json body -q '.[0].body' || echo "")
 
           if [ -n "$LATEST_ISSUE_BODY" ]; then
             echo "Existing issue found. Comparing reports..."
@@ -191,4 +191,4 @@ jobs:
             --repo "${{ matrix.docs_repo }}" \
             --title "Broken Links Detected on $(date +'%Y-%m-%d')" \
             --body "${{ steps.report.outputs.body }}" \
-            --label "broken-links"
+            --label "D0 - Broken Links"
