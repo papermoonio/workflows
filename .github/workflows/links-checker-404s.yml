@@ -113,9 +113,9 @@ jobs:
         working-directory: ${{ matrix.mkdocs_repo_name }}
         run: |
           ARGS="--verbose --no-progress --accept 429,403"
-          if [[ -f "${{ matrix.mkdocs_repo_name }}/.urlignore" ]]; then
+          if [[ -f "$(pwd)/.urlignore" ]]; then
             echo "Found .urlignore file. Adding to lychee arguments."
-            ARGS="$ARGS --exclude-file ./${{ matrix.mkdocs_repo_name }}/.urlignore"
+            ARGS="$ARGS --exclude-file $(pwd)/.urlignore"
           fi
           echo "args=$ARGS" >> $GITHUB_OUTPUT
 
