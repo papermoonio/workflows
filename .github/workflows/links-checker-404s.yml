@@ -85,7 +85,12 @@ jobs:
             filtered=$(echo "$all_projects" | jq -c "[.[] | select(.label == \"$selected\")]")
           fi
 
-          echo "matrix=$filtered" >> $GITHUB_OUTPUT
+          if [ -z "$filtered" ] || [ "$filtered" = "[]" ]; then
+            echo "❌ Error: No projects matched filter '$selected'."
+            exit 1
+          fi
+
+          echo "matrix=$filtered" >> "$GITHUB_OUTPUT"
 
   check-links:
     needs: generate-matrix
