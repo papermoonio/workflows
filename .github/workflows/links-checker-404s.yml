@@ -110,12 +110,11 @@ jobs:
       # Prepare arguments for the link checker.
       - name: Prepare Lychee Arguments
         id: lychee_args
-        working-directory: ${{ matrix.mkdocs_repo_name }}
         run: |
-          ARGS="--verbose --no-progress --accept 429,403"
-          if [[ -f "$(pwd)/.urlignore" ]]; then
+          ARGS="--root-dir $(pwd)/${{ matrix.mkdocs_repo_name }}/site --verbose --no-progress --accept 429,403"
+          if [[ -f "$(pwd)/${{ matrix.mkdocs_repo_name }}/.urlignore" ]]; then
             echo "Found .urlignore file. Adding to lychee arguments."
-            ARGS="$ARGS --exclude-file $(pwd)/.urlignore"
+            ARGS="$ARGS --exclude-file $(pwd)/${{ matrix.mkdocs_repo_name }}/.urlignore"
           fi
           echo "args=$ARGS" >> $GITHUB_OUTPUT
 
@@ -126,8 +125,8 @@ jobs:
         with:
           args: >
             ${{ steps.lychee_args.outputs.args }}
-            './${{ matrix.mkdocs_repo_name }}/site/**/*.html'
-          output: ./${{ matrix.mkdocs_repo_name }}/lychee-report.md
+            '$(pwd)/${{ matrix.mkdocs_repo_name }}/site/**/*.html'
+          output: $(pwd)/${{ matrix.mkdocs_repo_name }}/lychee-report.md
           fail: true
         continue-on-error: true
 
@@ -136,7 +135,7 @@ jobs:
         if: steps.lychee.outcome == 'failure'
         id: report
         run: |
-          report_body=$(cat ./${{ matrix.mkdocs_repo_name }}/lychee-report.md)
+          report_body=$(cat $(pwd)/${{ matrix.mkdocs_repo_name }}/lychee-report.md)
           report_cleaned=$(echo "$report_body" | sed 's/^\s*//;s/\s*$//')
           
           {
