@@ -125,8 +125,8 @@ jobs:
         with:
           args: >
             ${{ steps.lychee_args.outputs.args }}
-            '$(pwd)/${{ matrix.mkdocs_repo_name }}/site/**/*.html'
-          output: $(pwd)/${{ matrix.mkdocs_repo_name }}/lychee-report.md
+            './${{ matrix.mkdocs_repo_name }}/site/**/*.html'
+          output: ./${{ matrix.mkdocs_repo_name }}/lychee-report.md
           fail: true
         continue-on-error: true
 
@@ -135,7 +135,7 @@ jobs:
         if: steps.lychee.outcome == 'failure'
         id: report
         run: |
-          report_body=$(cat $(pwd)/${{ matrix.mkdocs_repo_name }}/lychee-report.md)
+          report_body=$(cat ./${{ matrix.mkdocs_repo_name }}/lychee-report.md)
           report_cleaned=$(echo "$report_body" | sed 's/^\s*//;s/\s*$//')
           
           {
