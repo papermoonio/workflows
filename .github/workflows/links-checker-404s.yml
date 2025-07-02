@@ -164,8 +164,9 @@ jobs:
             echo "EOF"
           } >> $GITHUB_OUTPUT
 
-      # Create a GitHub issue if broken links are detected.
-      - name: Create Issue without Label
+      # Create a GitHub issue only if broken links are detected.
+      - name: Create Issue on Failure
+        if: steps.lychee.outcome == 'failure'
         id: create_issue
         env:
           GH_TOKEN: ${{ steps.select_token.outputs.token }}
