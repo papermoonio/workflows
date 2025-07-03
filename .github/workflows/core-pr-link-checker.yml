@@ -15,6 +15,9 @@ on:
       docs_repo_name:
         required: true
         type: string
+      root_dir:
+        required: false
+        type: string
     secrets:
       GH_TOKEN:
         required: true
@@ -56,10 +59,10 @@ jobs:
       - name: Prepare Lychee Arguments
         id: lychee_args
         run: |
-          ARGS="--root-dir $(pwd)/${{ input.mkdocs_repo_name }}/site --verbose --no-progress --accept 429,403"
-          if [[ -f "$(pwd)/${{ input.mkdocs_repo_name }}/.urlignore" ]]; then
+          ARGS="--root-dir $(pwd)/${{ inputs.mkdocs_repo_name }}/site --verbose --no-progress --accept 429,403"
+          if [[ -f "$(pwd)/${{ inputs.mkdocs_repo_name }}/.urlignore" ]]; then
             echo "Found .urlignore file. Adding to lychee arguments."
-            ARGS="$ARGS --exclude-file $(pwd)/${{ input.mkdocs_repo_name }}/.urlignore"
+            ARGS="$ARGS --exclude-file $(pwd)/${{ inputs.mkdocs_repo_name }}/.urlignore"
           fi
           echo "args=$ARGS" >> $GITHUB_OUTPUT
 
@@ -70,6 +73,6 @@ jobs:
         with:
           args: >
             ${{ steps.lychee_args.outputs.args }}
-            './${{ input.mkdocs_repo_name }}/site/**/*.html'
+            './${{ inputs.mkdocs_repo_name }}/site/**/*.html'
           fail: false
         continue-on-error: false
