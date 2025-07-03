@@ -55,22 +55,21 @@ jobs:
 
       - name: Prepare Lychee Arguments
         id: lychee_args
-        working-directory: ${{ inputs.mkdocs_repo_name }}
         run: |
-          ARGS="--verbose --no-progress --accept 429,403"
-          if [[ -f "$(pwd)/.urlignore" ]]; then
+          ARGS="--root-dir $(pwd)/${{ input.mkdocs_repo_name }}/site --verbose --no-progress --accept 429,403"
+          if [[ -f "$(pwd)/${{ input.mkdocs_repo_name }}/.urlignore" ]]; then
             echo "Found .urlignore file. Adding to lychee arguments."
-            ARGS="$ARGS --exclude-file $(pwd)/.urlignore"
+            ARGS="$ARGS --exclude-file $(pwd)/${{ input.mkdocs_repo_name }}/.urlignore"
           fi
           echo "args=$ARGS" >> $GITHUB_OUTPUT
 
+      # Run the link checker (lychee) on the built MkDocs site.
       - name: 'Run Link Checker (lychee)'
         id: lychee
         uses: lycheeverse/lychee-action@v2.4.1
         with:
           args: >
             ${{ steps.lychee_args.outputs.args }}
-            './${{ inputs.mkdocs_repo_name }}/site/**/*.html'
+            './${{ input.mkdocs_repo_name }}/site/**/*.html'
           fail: false
         continue-on-error: false
-
