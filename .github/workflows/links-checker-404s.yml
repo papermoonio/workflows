@@ -18,6 +18,11 @@ on:
           - Wormhole
           - kluster.ai
           - Polkadot
+      create_issue:
+        description: 'Create GitHub Issue if broken links are found?'
+        required: false
+        type: boolean
+        default: true
 
 jobs:
   generate-matrix:
@@ -34,11 +39,11 @@ jobs:
           # The 'token' key has been removed from this JSON object
           all_projects=$(jq -n '
             [
-              { "mkdocs_repo": "papermoonio/kluster-mkdocs", "docs_repo": "kluster-ai/docs", "mkdocs_repo_name": "kluster-mkdocs", "docs_repo_name": "kluster-docs", "label": "kluster.ai" },
-              { "mkdocs_repo": "papermoonio/polkadot-mkdocs", "docs_repo": "polkadot-developers/polkadot-docs", "mkdocs_repo_name": "polkadot-mkdocs", "docs_repo_name": "polkadot-docs", "label": "Polkadot" },
-              { "mkdocs_repo": "papermoonio/moonbeam-mkdocs", "docs_repo": "moonbeam-foundation/moonbeam-docs", "mkdocs_repo_name": "moonbeam-mkdocs", "docs_repo_name": "moonbeam-docs", "label": "Moonbeam" },
-              { "mkdocs_repo": "papermoonio/tanssi-mkdocs", "docs_repo": "moondance-labs/tanssi-docs", "mkdocs_repo_name": "tanssi-mkdocs", "docs_repo_name": "tanssi-docs", "label": "Tanssi" },
-              { "mkdocs_repo": "papermoonio/wormhole-mkdocs", "docs_repo": "wormhole-foundation/wormhole-docs", "mkdocs_repo_name": "wormhole-mkdocs", "docs_repo_name": "wormhole-docs", "label": "Wormhole" }
+              { "mkdocs_repo": "papermoonio/kluster-mkdocs", "docs_repo": "kluster-ai/docs", "mkdocs_repo_name": "kluster-mkdocs", "docs_repo_name": "kluster-docs", "root_dir": "", "label": "kluster.ai" },
+              { "mkdocs_repo": "papermoonio/polkadot-mkdocs", "docs_repo": "polkadot-developers/polkadot-docs", "mkdocs_repo_name": "polkadot-mkdocs", "docs_repo_name": "polkadot-docs", "root_dir": "", "label": "Polkadot" },
+              { "mkdocs_repo": "papermoonio/moonbeam-mkdocs", "docs_repo": "moonbeam-foundation/moonbeam-docs", "mkdocs_repo_name": "moonbeam-mkdocs", "docs_repo_name": "moonbeam-docs", "root_dir": "", "label": "Moonbeam" },
+              { "mkdocs_repo": "papermoonio/tanssi-mkdocs", "docs_repo": "moondance-labs/tanssi-docs", "mkdocs_repo_name": "tanssi-mkdocs", "docs_repo_name": "tanssi-docs", "root_dir": "", "label": "Tanssi" },
+              { "mkdocs_repo": "papermoonio/wormhole-mkdocs", "docs_repo": "wormhole-foundation/wormhole-docs", "mkdocs_repo_name": "wormhole-mkdocs", "docs_repo_name": "wormhole-docs", "root_dir": "/docs", "label": "Wormhole" }
             ]
           ')
 
@@ -105,7 +110,7 @@ jobs:
       # Install MkDocs and the link checker plugin.
       - name: 'Build MkDocs site'
         working-directory: ${{ matrix.mkdocs_repo_name }}
-        run: mkdocs build -d site
+        run: mkdocs build -d site${{ matrix.root_dir }}
 
       # Prepare arguments for the link checker.
       - name: Prepare Lychee Arguments
@@ -165,7 +170,7 @@ jobs:
 
       # Create a GitHub issue only if broken links are detected.
       - name: Create Issue on Failure
-        if: steps.lychee.outcome == 'failure'
+        if: steps.lychee.outcome == 'failure' && (github.event.inputs.create_issue == 'true')
         id: create_issue
         env:
           GH_TOKEN: ${{ steps.select_token.outputs.token }}
@@ -174,4 +179,3 @@ jobs:
             --repo "${{ matrix.docs_repo }}" \
             --title "Broken Links Detected on $(date +'%Y-%m-%d')" \
             --body "${{ steps.report.outputs.body }}"
-      
