@@ -35,8 +35,7 @@ jobs:
           repository: ${{ inputs.mkdocs_repo }}
           path: ${{ inputs.mkdocs_repo_name }}
 
-      - name: 'Checkout Docs Repo'
-        if: ${{ inputs.docs_repo != inputs.mkdocs_repo }}
+      - name: 'Checkout Docs Repo into MkDocs'
         uses: actions/checkout@v4
         with:
           repository: ${{ inputs.docs_repo }}
@@ -44,7 +43,7 @@ jobs:
           ref: ${{ github.event.pull_request.head.ref }}
           fetch-depth: 0
 
-      - name: 'Get Added Markdown Files for Exclusion'
+      - name: 'Get added Markdown files for exclusion'
         id: added_pages
         working-directory: >-
           ${{ inputs.mkdocs_repo_name }}/${{ inputs.docs_repo_name }}
@@ -54,35 +53,58 @@ jobs:
           git diff --name-status origin/$BASE_REF...HEAD | \
             awk '$1 == "A" && $2 ~ /\.md$/ {print $2}' > /tmp/added_pages.txt
 
+          # Display the added pages
+          ADDED_COUNT=$(wc -l < /tmp/added_pages.txt)
+          echo "📄 Found $ADDED_COUNT added markdown files in this PR:"
+
+          if [ -s /tmp/added_pages.txt ]; then
+            while IFS= read -r file; do
+              echo "  ✅ $file"
+            done < /tmp/added_pages.txt
+          else
+            echo "  (No new markdown files added)"
+          fi
+
       - name: 'Set up Python'
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
           cache: 'pip'
 
-      - name: 'Install Dependencies'
+      - name: 'Install dependencies'
         working-directory: ${{ inputs.mkdocs_repo_name }}
         run: |
           pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: 'Build MkDocs Site'
+      - name: 'Build MkDocs site'
         working-directory: ${{ inputs.mkdocs_repo_name }}
         run: |
           mkdocs build -d site
 
-      - name: 'Convert Added Pages to Excluded URLs'
+      - name: 'Convert added pages to excluded URLs'
         id: ignore_links
         if: ${{ inputs.url != '' }}
         run: |
           IGNORED_LINKS=""
+          EXCLUDED_COUNT=0
+
+          echo "🔗 Converting added markdown files to excluded URLs:"
+          echo "   Base URL: ${{ inputs.url }}"
+          echo ""
+
           while read -r FILE; do
             [ -z "$FILE" ] && continue
             PATH=$(echo "$FILE" | sed -e 's/^docs\///' \
               -e 's/index\.md$//' -e 's/\.md$//')
             URL="${{ inputs.url }}/${PATH}/"
             IGNORED_LINKS="$IGNORED_LINKS --exclude $URL"
+            EXCLUDED_COUNT=$((EXCLUDED_COUNT + 1))
+            echo "  🚫 $FILE → $URL"
           done < /tmp/added_pages.txt
+
+          echo ""
+          echo "📊 Summary: Excluding $EXCLUDED_COUNT URLs from link checking"
           echo "ignored=$IGNORED_LINKS" >> $GITHUB_OUTPUT
 
       - name: 'Prepare Lychee Arguments'
