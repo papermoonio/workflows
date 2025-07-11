@@ -18,6 +18,9 @@ on:
       root_dir:
         required: false
         type: string
+      url:
+        required: false
+        type: string
     secrets:
       GH_TOKEN:
         required: true
@@ -37,7 +40,19 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: ${{ inputs.docs_repo }}
-          path: '${{ inputs.mkdocs_repo_name}}/${{ inputs.docs_repo_name}}'
+          path: ${{ inputs.mkdocs_repo_name }}/${{ inputs.docs_repo_name }}
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+
+      - name: 'Get Added Markdown Files for Exclusion'
+        id: added_pages
+        working-directory: >-
+          ${{ inputs.mkdocs_repo_name }}/${{ inputs.docs_repo_name }}
+        run: |
+          BASE_REF="${{ github.event.pull_request.base.ref }}"
+          git fetch origin "$BASE_REF:refs/remotes/origin/$BASE_REF"
+          git diff --name-status origin/$BASE_REF...HEAD | \
+            awk '$1 == "A" && $2 ~ /\.md$/ {print $2}' > /tmp/added_pages.txt
 
       - name: 'Set up Python'
         uses: actions/setup-python@v5
@@ -45,34 +60,49 @@ jobs:
           python-version: '3.11'
           cache: 'pip'
 
-      - name: 'Install dependencies'
+      - name: 'Install Dependencies'
         working-directory: ${{ inputs.mkdocs_repo_name }}
         run: |
           pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: 'Build MkDocs site'
+      - name: 'Build MkDocs Site'
         working-directory: ${{ inputs.mkdocs_repo_name }}
         run: |
           mkdocs build -d site
 
-      - name: Prepare Lychee Arguments
+      - name: 'Convert Added Pages to Excluded URLs'
+        id: ignore_links
+        if: ${{ inputs.url != '' }}
+        run: |
+          IGNORED_LINKS=""
+          while read -r FILE; do
+            [ -z "$FILE" ] && continue
+            PATH=$(echo "$FILE" | sed -e 's/^docs\///' \
+              -e 's/index\.md$//' -e 's/\.md$//')
+            URL="${{ inputs.url }}/${PATH}/"
+            IGNORED_LINKS="$IGNORED_LINKS --exclude $URL"
+          done < /tmp/added_pages.txt
+          echo "ignored=$IGNORED_LINKS" >> $GITHUB_OUTPUT
+
+      - name: 'Prepare Lychee Arguments'
         id: lychee_args
         run: |
-          ARGS="--root-dir $(pwd)/${{ inputs.mkdocs_repo_name }}/site --no-progress --accept 429,403"
+          ARGS="--root-dir $(pwd)/${{ inputs.mkdocs_repo_name }}/site \
+            --no-progress --accept 429,403"
           if [[ -f "$(pwd)/${{ inputs.mkdocs_repo_name }}/.urlignore" ]]; then
             echo "Found .urlignore file. Adding to lychee arguments."
-            ARGS="$ARGS --exclude-file $(pwd)/${{ inputs.mkdocs_repo_name }}/.urlignore"
+            ARGS="$ARGS --exclude-file \
+              $(pwd)/${{ inputs.mkdocs_repo_name }}/.urlignore"
           fi
           echo "args=$ARGS" >> $GITHUB_OUTPUT
 
-      # Run the link checker (lychee) on the built MkDocs site.
       - name: 'Run Link Checker (lychee)'
         id: lychee
         uses: lycheeverse/lychee-action@v2.4.1
         with:
           args: >
             ${{ steps.lychee_args.outputs.args }}
+            ${{ steps.ignore_links.outputs.ignored }}
             './${{ inputs.mkdocs_repo_name }}/site/**/*.html'
           fail: true
-        continue-on-error: false
