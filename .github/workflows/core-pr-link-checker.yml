@@ -106,3 +106,4 @@ jobs:
             ${{ steps.ignore_links.outputs.ignored }}
             './${{ inputs.mkdocs_repo_name }}/site/**/*.html'
           fail: true
+        continue-on-error: false
