@@ -82,7 +82,7 @@ jobs:
         run: |
           mkdocs build -d site
 
-      - name: 'Convert added pages to excluded URLs'
+      - name: Convert Added Pages to Excluded URLs
         id: ignore_links
         if: ${{ inputs.url != '' }}
         run: |
