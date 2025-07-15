@@ -43,26 +43,28 @@ jobs:
           ref: ${{ github.event.pull_request.head.ref }}
           fetch-depth: 0
 
-      - name: 'Get added Markdown files for exclusion'
+      - name: 'Get Added Files for Exclusion'
         id: added_pages
         working-directory: >-
           ${{ inputs.mkdocs_repo_name }}/${{ inputs.docs_repo_name }}
         run: |
           BASE_REF="${{ github.event.pull_request.base.ref }}"
           git fetch origin "$BASE_REF:refs/remotes/origin/$BASE_REF"
-          git diff --name-status origin/$BASE_REF...HEAD | \
-            awk '$1 == "A" && $2 ~ /\.md$/ {print $2}' > /tmp/added_pages.txt
 
-          # Display the added pages
+          # Get newly added .md and .ipynb files
+          git diff --name-status origin/$BASE_REF...HEAD | \
+            awk '$1 == "A" && ($2 ~ /\.md$/ || $2 ~ /\.ipynb$/) {print $2}' \
+            > /tmp/added_pages.txt
+
           ADDED_COUNT=$(wc -l < /tmp/added_pages.txt)
-          echo "📄 Found $ADDED_COUNT added markdown files in this PR:"
+          echo "📄 Found $ADDED_COUNT added files in this PR:"
 
           if [ -s /tmp/added_pages.txt ]; then
             while IFS= read -r file; do
               echo "  ✅ $file"
             done < /tmp/added_pages.txt
           else
-            echo "  (No new markdown files added)"
+            echo "  (No new files added)"
           fi
 
       - name: 'Set up Python'
@@ -82,21 +84,24 @@ jobs:
         run: |
           mkdocs build -d site
 
-      - name: Convert Added Pages to Excluded URLs
+      - name: 'Convert Added Pages to Excluded URLs'
         id: ignore_links
         if: ${{ inputs.url != '' }}
         run: |
           IGNORED_LINKS=""
           EXCLUDED_COUNT=0
 
-          echo "🔗 Converting added markdown files to excluded URLs:"
+          echo "🔗 Converting added files to excluded URLs:"
           echo "   Base URL: ${{ inputs.url }}"
           echo ""
 
           while read -r FILE; do
             [ -z "$FILE" ] && continue
+
             PATH=$(echo "$FILE" | sed -e 's/^docs\///' \
-              -e 's/index\.md$//' -e 's/\.md$//')
+              -e 's/index\.md$//' -e 's/index\.ipynb$//' \
+              -e 's/\.md$//' -e 's/\.ipynb$//')
+
             URL="${{ inputs.url }}/${PATH}/"
             IGNORED_LINKS="$IGNORED_LINKS --exclude $URL"
             EXCLUDED_COUNT=$((EXCLUDED_COUNT + 1))
