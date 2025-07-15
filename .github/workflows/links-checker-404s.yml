@@ -170,7 +170,7 @@ jobs:
 
       # Create a GitHub issue only if broken links are detected.
       - name: Create Issue on Failure
-        if: steps.lychee.outcome == 'failure' && (github.event.inputs.create_issue == 'true')
+        if: steps.lychee.outcome == 'failure' && ((github.event_name == 'workflow_dispatch' && github.event.inputs.create_issue == 'true') || github.event_name == 'schedule')
         id: create_issue
         env:
           GH_TOKEN: ${{ steps.select_token.outputs.token }}
