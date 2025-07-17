@@ -9,18 +9,10 @@ on:
       docs_repo:
         required: true
         type: string
-      mkdocs_repo_name:
-        required: true
-        type: string
-      docs_repo_name:
-        required: true
-        type: string
-      root_dir:
-        required: false
-        type: string
       url:
-        required: false
+        required: true
         type: string
+        description: 'The base URL of the deployed docs site (e.g., https://docs.tanssi.network)'
     secrets:
       GH_TOKEN:
         required: true
@@ -29,108 +21,97 @@ jobs:
   check-links:
     runs-on: ubuntu-latest
     steps:
+      # Step 1: Derive repository names from inputs for use in later steps
+      - name: 'Set up workflow variables'
+        id: vars
+        run: |
+          echo "mkdocs_repo_name=$(basename ${{ inputs.mkdocs_repo }})" >> $GITHUB_OUTPUT
+          echo "docs_repo_name=$(basename ${{ inputs.docs_repo }})" >> $GITHUB_OUTPUT
+
+      # Step 2: Checkout the MkDocs and Docs repositories
       - name: 'Checkout MkDocs Repo'
         uses: actions/checkout@v4
         with:
           repository: ${{ inputs.mkdocs_repo }}
-          path: ${{ inputs.mkdocs_repo_name }}
+          path: ${{ steps.vars.outputs.mkdocs_repo_name }}
 
       - name: 'Checkout Docs Repo into MkDocs'
         uses: actions/checkout@v4
         with:
           repository: ${{ inputs.docs_repo }}
-          path: ${{ inputs.mkdocs_repo_name }}/${{ inputs.docs_repo_name }}
+          path: ${{ steps.vars.outputs.mkdocs_repo_name }}/${{ steps.vars.outputs.docs_repo_name }}
           ref: ${{ github.event.pull_request.head.ref }}
-          fetch-depth: 0
+      
+      # Step 3: Use a dedicated action to reliably find newly added files
+      - name: 'Find new documentation files'
+        id: added_files
+        uses: tj-actions/changed-files@v44
+        with:
+          files: |
+            **/*.md
+            **/*.ipynb
+          files_filter: 'A' # Filter for 'A'dded files only
+          working_directory: ${{ steps.vars.outputs.mkdocs_repo_name }}/${{ steps.vars.outputs.docs_repo_name }}
 
-      - name: 'Get Added Files for Exclusion'
-        id: added_pages
-        working-directory: >-
-          ${{ inputs.mkdocs_repo_name }}/${{ inputs.docs_repo_name }}
-        run: |
-          BASE_REF="${{ github.event.pull_request.base.ref }}"
-          git fetch origin "$BASE_REF:refs/remotes/origin/$BASE_REF"
-
-          # Get newly added .md and .ipynb files
-          git diff --name-status origin/$BASE_REF...HEAD | \
-            awk '$1 == "A" && ($2 ~ /\.md$/ || $2 ~ /\.ipynb$/) {print $2}' \
-            > /tmp/added_pages.txt
-
-          ADDED_COUNT=$(wc -l < /tmp/added_pages.txt)
-          echo "📄 Found $ADDED_COUNT added files in this PR:"
-
-          if [ -s /tmp/added_pages.txt ]; then
-            while IFS= read -r file; do
-              echo "  ✅ $file"
-            done < /tmp/added_pages.txt
-          else
-            echo "  (No new files added)"
-          fi
-
+      # Step 4: Set up Python and install dependencies
       - name: 'Set up Python'
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
           cache: 'pip'
+          cache-dependency-path: '${{ steps.vars.outputs.mkdocs_repo_name }}/requirements.txt'
 
       - name: 'Install dependencies'
-        working-directory: ${{ inputs.mkdocs_repo_name }}
+        working-directory: ${{ steps.vars.outputs.mkdocs_repo_name }}
         run: |
           pip install --upgrade pip
           pip install -r requirements.txt
 
+      # Step 5: Build the MkDocs site
       - name: 'Build MkDocs site'
-        working-directory: ${{ inputs.mkdocs_repo_name }}
-        run: |
-          mkdocs build -d site
+        working-directory: ${{ steps.vars.outputs.mkdocs_repo_name }}
+        run: mkdocs build -d site
 
-      - name: 'Convert Added Pages to Excluded URLs'
-        id: ignore_links
-        if: ${{ inputs.url != '' }}
-        run: |
-          IGNORED_LINKS=""
-          EXCLUDED_COUNT=0
-
-          echo "🔗 Converting added files to excluded URLs:"
-          echo "   Base URL: ${{ inputs.url }}"
-          echo ""
-
-          while read -r FILE; do
-            [ -z "$FILE" ] && continue
-
-            PATH=$(echo "$FILE" | sed -e 's/^docs\///' \
-              -e 's/index\.md$//' -e 's/index\.ipynb$//' \
-              -e 's/\.md$//' -e 's/\.ipynb$//')
-
-            URL="${{ inputs.url }}/${PATH}/"
-            IGNORED_LINKS="$IGNORED_LINKS --exclude $URL"
-            EXCLUDED_COUNT=$((EXCLUDED_COUNT + 1))
-            echo "  🚫 $FILE → $URL"
-          done < /tmp/added_pages.txt
-
-          echo ""
-          echo "📊 Summary: Excluding $EXCLUDED_COUNT URLs from link checking"
-          echo "ignored=$IGNORED_LINKS" >> $GITHUB_OUTPUT
-
-      - name: 'Prepare Lychee Arguments'
+      # Step 6: Consolidate all argument preparation into one script
+      - name: 'Prepare all lychee arguments'
         id: lychee_args
+        env:
+          ADDED_FILES: ${{ steps.added_files.outputs.added_files }}
+          MKDOCS_REPO_NAME: ${{ steps.vars.outputs.mkdocs_repo_name }}
+          BASE_URL: ${{ inputs.url }}
         run: |
-          ARGS="--root-dir $(pwd)/${{ inputs.mkdocs_repo_name }}/site \
-            --no-progress --accept 429,403"
-          if [[ -f "$(pwd)/${{ inputs.mkdocs_repo_name }}/.urlignore" ]]; then
+          # Start with base arguments
+          ARGS="--root-dir ${{ github.workspace }}/${MKDOCS_REPO_NAME}/site --no-progress --accept 429,403"
+
+          # Add .urlignore file if it exists
+          URLIGNORE_PATH="${{ github.workspace }}/${MKDOCS_REPO_NAME}/.urlignore"
+          if [[ -f "$URLIGNORE_PATH" ]]; then
             echo "Found .urlignore file. Adding to lychee arguments."
-            ARGS="$ARGS --exclude-file \
-              $(pwd)/${{ inputs.mkdocs_repo_name }}/.urlignore"
+            ARGS="$ARGS --exclude-file $URLIGNORE_PATH"
           fi
+
+          # Loop through added files (if any) and generate exclusion URLs
+          if [[ -n "$ADDED_FILES" ]]; then
+            echo "🔗 Excluding URLs for new pages found in this PR:"
+            for file in $ADDED_FILES; do
+              URL_PATH=$(echo "$file" | sed -e 's/^docs\///' -e 's/index\.\(md\|ipynb\)$//' -e 's/\.\(md\|ipynb\)$//')
+              EXCLUDED_URL="${BASE_URL}/${URL_PATH}/"
+              
+              echo "  🚫 $file → $EXCLUDED_URL"
+              ARGS="$ARGS --exclude $EXCLUDED_URL"
+            done
+          else
+            echo "✅ No new pages to exclude."
+          fi
+
+          # Append the final target glob pattern for lychee to scan
+          ARGS="$ARGS '${{ github.workspace }}/${MKDOCS_REPO_NAME}/site/**/*.html'"
+
           echo "args=$ARGS" >> $GITHUB_OUTPUT
 
+      # Step 7: Run the link checker with the fully prepared arguments
       - name: 'Run Link Checker (lychee)'
-        id: lychee
         uses: lycheeverse/lychee-action@v2.4.1
         with:
-          args: >
-            ${{ steps.lychee_args.outputs.args }}
-            ${{ steps.ignore_links.outputs.ignored }}
-            './${{ inputs.mkdocs_repo_name }}/site/**/*.html'
+          args: ${{ steps.lychee_args.outputs.args }}
           fail: true
-        continue-on-error: false
