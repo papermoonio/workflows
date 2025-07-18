@@ -1,0 +1,119 @@
+name: Trigger n8n Webhook with Complete PR Info
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  gather-and-send:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Generate Run UUID
+        id: uuid
+        run: echo "run_token=$(uuidgen)" >> $GITHUB_OUTPUT
+
+      - name: Fetch PR metadata
+        id: pr
+        uses: octokit/request-action@v2.x
+        with:
+          route: GET /repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Fetch PR files (diffs/patches)
+        id: files
+        uses: octokit/request-action@v2.x
+        with:
+          route: GET /repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Fetch PR commits
+        id: commits
+        uses: octokit/request-action@v2.x
+        with:
+          route: GET /repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/commits
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Fetch PR diff (patch)
+        id: diff
+        run: |
+          curl -L \
+            -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github.v3.diff" \
+            "https://api.github.com/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}" \
+            > pr.diff
+          DIFF_B64=$(base64 -w 0 pr.diff)
+          echo "diff_b64=$DIFF_B64" >> $GITHUB_OUTPUT
+
+      - name: Combine and send to n8n webhook and capture response
+        id: n8n
+        env:
+          PR_DATA: ${{ steps.pr.outputs.data }}
+          FILES_DATA: ${{ steps.files.outputs.data }}
+          COMMITS_DATA: ${{ steps.commits.outputs.data }}
+          DIFF_B64: ${{ steps.diff.outputs.diff_b64 }}
+          RUN_TOKEN: ${{ steps.uuid.outputs.run_token }}
+        run: |
+          set -e
+          cat > payload.json <<EOF
+          {
+            "pr": $PR_DATA,
+            "files": $FILES_DATA,
+            "commits": $COMMITS_DATA,
+            "diff_base64": "$DIFF_B64",
+            "token": "$RUN_TOKEN"
+          }
+          EOF
+
+          # Post to n8n and capture response
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
+            -H "Content-Type: application/json" \
+            --data @payload.json \
+            https://n8n.papermoon.io/webhook-test/8bdbd1e3-f7bf-4bec-ae9d-9535ef6158a2)
+
+          HTTP_BODY=$(echo "$RESPONSE" | sed '$d')
+          HTTP_STATUS=$(echo "$RESPONSE" | tail -n1)
+
+          echo "n8n responded with status: $HTTP_STATUS"
+          echo "n8n response body: $HTTP_BODY"
+
+          # Save response body to file for next step
+          echo "$HTTP_BODY" > response_body.json
+
+          # Robust jq extraction, stripping stray quotes
+          STATUS=$(echo "$HTTP_BODY" | jq -r ".status" | tr -d '"')
+          MATCHED=$(echo "$HTTP_BODY" | jq -r ".token" | tr -d '"')
+
+          if [ "$MATCHED" != "$RUN_TOKEN" ] || [ "$STATUS" != "completed" ]; then
+            echo "n8n workflow did not complete correctly or token mismatch"
+            exit 1
+          fi
+
+          # Fail if HTTP status not 2xx
+          if [ "$HTTP_STATUS" -lt 200 ] || [ "$HTTP_STATUS" -ge 300 ]; then
+            echo "n8n workflow failed or did not complete successfully"
+            exit 1
+          fi
+
+      - name: Post n8n feedback to PR (if feedback was provided)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          RESPONSE_BODY=$(cat response_body.json)
+          COMMENT=$(echo "$RESPONSE_BODY" | jq -r ".comment" | tr -d '"')
+          PR_NUMBER=$(echo "$RESPONSE_BODY" | jq -r ".pr_number" | tr -d '"')
+          if [ -n "$COMMENT" ] && [ "$COMMENT" != "null" ]; then
+            echo "Posting feedback to PR #$PR_NUMBER"
+            gh pr comment "$PR_NUMBER" --body "$COMMENT"
+          else
+            echo "No comment to post."
+          fi
