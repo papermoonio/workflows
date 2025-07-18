@@ -3,14 +3,18 @@ name: Trigger n8n Webhook with Complete PR Info
 on:
   pull_request:
     types: [opened, synchronize, reopened]
+    # Only run on internal repositories to prevent external data exposure
+    branches: [main, develop]
 
 permissions:
-  contents: write
+  contents: read  # Reduced from write to read-only
   pull-requests: write
 
 jobs:
   gather-and-send:
     runs-on: ubuntu-latest
+    # Only run for trusted users/organizations
+    if: github.event.pull_request.head.repo.full_name == github.repository
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -43,33 +47,43 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Fetch PR diff (patch)
-        id: diff
-        run: |
-          curl -L \
-            -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-            -H "Accept: application/vnd.github.v3.diff" \
-            "https://api.github.com/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}" \
-            > pr.diff
-          DIFF_B64=$(base64 -w 0 pr.diff)
-          echo "diff_b64=$DIFF_B64" >> $GITHUB_OUTPUT
-
       - name: Combine and send to n8n webhook and capture response
         id: n8n
         env:
           PR_DATA: ${{ steps.pr.outputs.data }}
           FILES_DATA: ${{ steps.files.outputs.data }}
           COMMITS_DATA: ${{ steps.commits.outputs.data }}
-          DIFF_B64: ${{ steps.diff.outputs.diff_b64 }}
           RUN_TOKEN: ${{ steps.uuid.outputs.run_token }}
+          N8N_WEBHOOK_URL: ${{ secrets.N8N_WEBHOOK_URL }}
         run: |
           set -e
+          
+          # Validate webhook URL is configured
+          if [ -z "$N8N_WEBHOOK_URL" ]; then
+            echo "Error: N8N_WEBHOOK_URL secret is not configured"
+            exit 1
+          fi
+
+          # Extract only necessary PR information to limit data exposure
+          PR_NUMBER=$(echo "$PR_DATA" | jq -r '.number')
+          PR_TITLE=$(echo "$PR_DATA" | jq -r '.title')
+          PR_STATE=$(echo "$PR_DATA" | jq -r '.state')
+          PR_AUTHOR=$(echo "$PR_DATA" | jq -r '.user.login')
+          
+          # Sanitize and limit file information
+          FILES_COUNT=$(echo "$FILES_DATA" | jq 'length')
+          FILE_NAMES=$(echo "$FILES_DATA" | jq -r '.[].filename' | head -10 | jq -R -s -c 'split("\n") | map(select(length > 0))')
+          
+          # Create sanitized payload with minimal necessary data
           cat > payload.json <<EOF
           {
-            "pr": $PR_DATA,
-            "files": $FILES_DATA,
-            "commits": $COMMITS_DATA,
-            "diff_base64": "$DIFF_B64",
+            "pr_number": $PR_NUMBER,
+            "pr_title": $(echo "$PR_TITLE" | jq -R .),
+            "pr_state": $(echo "$PR_STATE" | jq -R .),
+            "pr_author": $(echo "$PR_AUTHOR" | jq -R .),
+            "files_count": $FILES_COUNT,
+            "file_names": $FILE_NAMES,
+            "repository": "${{ github.repository }}",
             "token": "$RUN_TOKEN"
           }
           EOF
@@ -78,13 +92,14 @@ jobs:
           RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
             -H "Content-Type: application/json" \
             --data @payload.json \
-            https://n8n.papermoon.io/webhook-test/8bdbd1e3-f7bf-4bec-ae9d-9535ef6158a2)
+            "$N8N_WEBHOOK_URL")
 
           HTTP_BODY=$(echo "$RESPONSE" | sed '$d')
           HTTP_STATUS=$(echo "$RESPONSE" | tail -n1)
 
           echo "n8n responded with status: $HTTP_STATUS"
-          echo "n8n response body: $HTTP_BODY"
+          # Don't log response body as it may contain sensitive data
+          echo "n8n response received"
 
           # Save response body to file for next step
           echo "$HTTP_BODY" > response_body.json
@@ -104,6 +119,9 @@ jobs:
             exit 1
           fi
 
+          # Clean up payload file containing sensitive data
+          rm -f payload.json
+
       - name: Post n8n feedback to PR (if feedback was provided)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -117,3 +135,7 @@ jobs:
           else
             echo "No comment to post."
           fi
+          
+          # Clean up response file containing potentially sensitive data
+          rm -f response_body.json
+          fi 
