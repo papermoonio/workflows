@@ -13,11 +13,8 @@ permissions:
 jobs:
   gather-and-send:
     runs-on: ubuntu-latest
-    # Only run for trusted users/organizations and limit concurrency
-    if: github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]'
-    concurrency:
-      group: n8n-webhook-${{ github.event.pull_request.number }}
-      cancel-in-progress: true
+    # Only run for trusted users/organizations
+    if: github.event.pull_request.head.repo.full_name == github.repository
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -34,31 +31,47 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Fetch limited PR files metadata
+      - name: Fetch PR files (diffs/patches)
         id: files
         uses: octokit/request-action@v2.x
         with:
           route: GET /repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files
-          mediaType: |
-            {
-              "previews": ["application/vnd.github.v3+json"]
-            }
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Combine and send minimal data to n8n webhook
+      - name: Fetch PR commits
+        id: commits
+        uses: octokit/request-action@v2.x
+        with:
+          route: GET /repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/commits
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Load configuration and send to n8n webhook
         id: n8n
         env:
           PR_DATA: ${{ steps.pr.outputs.data }}
           FILES_DATA: ${{ steps.files.outputs.data }}
+          COMMITS_DATA: ${{ steps.commits.outputs.data }}
           RUN_TOKEN: ${{ steps.uuid.outputs.run_token }}
-          N8N_WEBHOOK_URL: ${{ secrets.N8N_WEBHOOK_URL }}
         run: |
           set -e
           
+          # Load configuration from file
+          CONFIG_FILE=".github/config/n8n-config.json"
+          if [ ! -f "$CONFIG_FILE" ]; then
+            echo "Error: Configuration file $CONFIG_FILE not found"
+            exit 1
+          fi
+          
+          # Extract configuration values
+          N8N_WEBHOOK_URL=$(jq -r '.webhook_url' "$CONFIG_FILE")
+          RETRY_COUNT=$(jq -r '.retry_count' "$CONFIG_FILE")
+          RETRY_DELAY=$(jq -r '.retry_delay' "$CONFIG_FILE")
+          
           # Validate webhook URL is configured
-          if [ -z "$N8N_WEBHOOK_URL" ]; then
-            echo "Error: N8N_WEBHOOK_URL secret is not configured"
+          if [ -z "$N8N_WEBHOOK_URL" ] || [ "$N8N_WEBHOOK_URL" = "null" ]; then
+            echo "Error: webhook_url not configured in $CONFIG_FILE"
             exit 1
           fi
 
@@ -68,42 +81,30 @@ jobs:
           PR_STATE=$(echo "$PR_DATA" | jq -r '.state')
           PR_AUTHOR=$(echo "$PR_DATA" | jq -r '.user.login')
           
-          # Validate PR data before processing
-          if [ "$PR_NUMBER" = "null" ] || [ -z "$PR_NUMBER" ]; then
-            echo "Error: Invalid PR number"
-            exit 1
-          fi
-          
-          # Sanitize and limit file information (only collect non-sensitive metadata)
+          # Sanitize and limit file information
           FILES_COUNT=$(echo "$FILES_DATA" | jq 'length')
-          # Only collect filenames, not content or patches
-          FILE_NAMES=$(echo "$FILES_DATA" | jq -r '.[].filename' | head -5 | grep -E '\.(md|txt|yml|yaml|json)$' | jq -R -s -c 'split("\n") | map(select(length > 0))')
-          
-          # Additional privacy check - exclude sensitive file patterns
-          SAFE_FILE_NAMES=$(echo "$FILE_NAMES" | jq -r '.[]' | grep -v -E '\.(key|pem|p12|pfx|env|secret)$' | jq -R -s -c 'split("\n") | map(select(length > 0))')
+          FILE_NAMES=$(echo "$FILES_DATA" | jq -r '.[].filename' | head -10 | jq -R -s -c 'split("\n") | map(select(length > 0))')
           
           # Create sanitized payload with minimal necessary data
           cat > payload.json <<EOF
           {
             "pr_number": $PR_NUMBER,
-            "pr_title": $(echo "$PR_TITLE" | sed 's/[^a-zA-Z0-9 ._-]//g' | jq -R .),
+            "pr_title": $(echo "$PR_TITLE" | jq -R .),
             "pr_state": $(echo "$PR_STATE" | jq -R .),
             "pr_author": $(echo "$PR_AUTHOR" | jq -R .),
             "files_count": $FILES_COUNT,
-            "safe_file_names": $SAFE_FILE_NAMES,
+            "file_names": $FILE_NAMES,
             "repository": "${{ github.repository }}",
-            "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
             "token": "$RUN_TOKEN"
           }
           EOF
 
-          # Post to n8n and capture response with timeout and retry
-          RESPONSE=$(timeout 30 curl -s -w "\n%{http_code}" -X POST \
+          # Post to n8n and capture response using config values
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
             -H "Content-Type: application/json" \
             -H "User-Agent: GitHub-Actions" \
-            --max-time 25 \
-            --retry 2 \
-            --retry-delay 5 \
+            --retry "$RETRY_COUNT" \
+            --retry-delay "$RETRY_DELAY" \
             --data @payload.json \
             "$N8N_WEBHOOK_URL")
 
