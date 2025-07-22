@@ -9,6 +9,9 @@ on:
       docs_repo:
         required: true
         type: string
+      docs_checkout:
+        required: true
+        type: string
       url:
         required: true
         type: string
@@ -27,6 +30,7 @@ jobs:
         run: |
           echo "mkdocs_repo_name=$(basename ${{ inputs.mkdocs_repo }})" >> $GITHUB_OUTPUT
           echo "docs_repo_name=$(basename ${{ inputs.docs_repo }})" >> $GITHUB_OUTPUT
+          echo "docs_checkout_path=$(basename ${{ inputs.docs_checkout }})" >> $GITHUB_OUTPUT
 
       # Step 2: Checkout the MkDocs and Docs repositories
       - name: 'Checkout MkDocs Repo'
@@ -39,7 +43,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: ${{ inputs.docs_repo }}
-          path: ${{ steps.vars.outputs.mkdocs_repo_name }}/${{ steps.vars.outputs.docs_repo_name }}
+          path: ${{ steps.vars.outputs.mkdocs_repo_name }}/${{ steps.vars.outputs.docs_checkout_path }}
           ref: ${{ github.event.pull_request.head.ref }}
       
       # Step 3: Use a dedicated action to reliably find newly added files
