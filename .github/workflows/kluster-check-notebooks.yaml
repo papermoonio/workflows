@@ -1,4 +1,4 @@
-name: Compare Notebook Hashes
+name: kluster.ai Compare Notebook Hashes
 
 on:
   workflow_dispatch:
