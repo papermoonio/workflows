@@ -1,4 +1,4 @@
-name: 'Link Check for Documentation Sites'
+name: 'General - Link Check for Documentation Sites'
 
 on:
   # Runs every day at midnight UTC (00:00).
