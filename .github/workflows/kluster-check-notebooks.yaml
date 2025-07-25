@@ -33,4 +33,4 @@ jobs:
         run: pip install nbformat
 
       - name: Run comparison script
-        run: python scripts/compare_hashes.py
+        run: python kluster_scripts/compare_hashes.py
