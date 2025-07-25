@@ -1,4 +1,4 @@
-name: 'Reusable Link Check Workflow'
+name: 'General - PR Core Link Checker'
 
 on:
   workflow_call:
