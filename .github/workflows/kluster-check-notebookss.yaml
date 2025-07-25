@@ -1,0 +1,36 @@
+name: Compare Notebook Hashes
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 14 * * 1-5'  # Monday through Friday at 14:00 UTC
+
+jobs:
+  check-hashes:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout current repo
+        uses: actions/checkout@v3
+        
+      - name: Checkout kluster-ai/docs
+        uses: actions/checkout@v3
+        with:
+          repository: kluster-ai/docs
+          path: docs-repo
+
+      - name: Checkout kluster-ai/klusterai-cookbook
+        uses: actions/checkout@v3
+        with:
+          repository: kluster-ai/klusterai-cookbook
+          path: cookbook-repo
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: pip install nbformat
+
+      - name: Run comparison script
+        run: python scripts/compare_hashes.py
