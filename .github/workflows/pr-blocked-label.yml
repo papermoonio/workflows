@@ -1,10 +1,10 @@
-name: Prevent Merge on Blocked PRs
+name: Prevent Merge on Non-Whitelisted PRs
 
 on:
   workflow_call:
     inputs:
-      blocking_labels:
-        description: 'Comma-separated list of labels that should block PR merging'
+      whitelist_labels:
+        description: 'Comma-separated list of labels that are required for PR merging'
         required: true
         type: string
   pull_request:
@@ -14,11 +14,11 @@ jobs:
   check-label:
     runs-on: ubuntu-latest
     steps:
-      - name: Check for blocking labels
+      - name: Check for whitelist labels
         uses: actions/github-script@v7
         with:
           script: |
-            const blockingLabels = "${{ inputs.blocking_labels }}".split(',').map(label => label.trim());
+            const whitelistLabels = "${{ inputs.whitelist_labels }}".split(',').map(label => label.trim());
             const prNumber = context.payload.pull_request.number;
             const { data: labels } = await github.rest.issues.listLabelsOnIssue({
               owner: context.repo.owner,
@@ -26,11 +26,11 @@ jobs:
               issue_number: prNumber
             });
             
-            const foundBlockingLabels = labels.filter(label => 
-              blockingLabels.includes(label.name)
+            const foundWhitelistLabels = labels.filter(label => 
+              whitelistLabels.includes(label.name)
             );
             
-            if (foundBlockingLabels.length > 0) {
-              const foundLabelNames = foundBlockingLabels.map(label => label.name).join(', ');
-              core.setFailed(`PR cannot be merged because it has the following blocking label(s): "${foundLabelNames}"`);
+            if (foundWhitelistLabels.length === 0) {
+              const requiredLabelNames = whitelistLabels.join(', ');
+              core.setFailed(`PR cannot be merged because it must have at least one of the following labels: "${requiredLabelNames}"`);
             }
