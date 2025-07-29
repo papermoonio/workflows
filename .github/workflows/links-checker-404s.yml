@@ -130,7 +130,6 @@ jobs:
         with:
           args: >
             ${{ steps.lychee_args.outputs.args }}
-            --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
             './${{ matrix.mkdocs_repo_name }}/site/**/*.html'
           output: ./${{ matrix.mkdocs_repo_name }}/lychee-report.md
           fail: true
