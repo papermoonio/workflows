@@ -3,7 +3,7 @@ name: kluster.ai Compare Notebook Hashes
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 15 * * 1-5'  # Monday through Friday at 15:00 UTC
+    - cron: '0 14 * * 1-5'  # Monday through Friday at 14:00 UTC
 
 jobs:
   check-hashes:
