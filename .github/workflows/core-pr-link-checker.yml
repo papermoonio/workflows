@@ -73,6 +73,8 @@ jobs:
           files: |
             **/*.md
             **/*.ipynb
+            **/*.webp
+            **/*.png
           # No files_filter to get all changes (A=added, M=modified, D=deleted, R=renamed)
           working_directory: ${{ steps.vars.outputs.mkdocs_repo_name }}/${{ steps.vars.outputs.docs_checkout_path }}
 
