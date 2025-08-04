@@ -106,7 +106,10 @@ jobs:
             fi
             
             # Remove docs/ prefix, handle index files, and remove extensions
-            local url_path=$(echo "$file" | sed -e "s/^docs\///" -e "s/index\.\(md\|ipynb\)$//" -e "s/\.\(md\|ipynb\)$//" | sed 's/\/$//')
+            local url_path=$(echo "$file" | sed -e "s/^docs\///" \
+                                    -e "s/index\.\(md\|ipynb\|webp\|png\)$//" \
+                                    -e "s/\.\(md\|ipynb\|webp\|png\)$//" \
+                                    -e 's/\/$//')
             echo "$url_path"
           }
 
