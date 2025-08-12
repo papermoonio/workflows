@@ -1,0 +1,94 @@
+name: Reusable — Validate LLMs file
+
+on:
+  workflow_call:
+    inputs:
+      llms_filename:
+        description: "Name of the LLMs file to validate"
+        type: string
+        default: "llms.txt"
+      generator_command:
+        description: "Command to generate the LLMs file"
+        type: string
+        default: "python3 scripts/generate_llms.py"
+      require_pr_file:
+        description: "Fail if the PR does not include the file"
+        type: boolean
+        default: false
+
+jobs:
+  check-llms:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          # core deps used by your generators
+          pip install pyyaml requests
+
+      - name: Get SHA256 of the PR's ${{ inputs.llms_filename }}
+        id: pr_llms_hash
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -f "${{ inputs.llms_filename }}" ]]; then
+            sha256sum "${{ inputs.llms_filename }}" | awk '{print $1}' > pr_sha256.txt
+          else
+            if [[ "${{ inputs.require_pr_file }}" == "true" ]]; then
+              echo "LLMs file '${{ inputs.llms_filename }}' is missing from the PR." >&2
+              exit 1
+            else
+              echo "0000" > pr_sha256.txt
+            fi
+          fi
+          echo "PR hash: $(cat pr_sha256.txt)"
+
+      - name: Generate ${{ inputs.llms_filename }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # run in workspace root; generator must write to the repo root or specified path
+          ${{ inputs.generator_command }}
+
+      - name: Calculate SHA256 of generated ${{ inputs.llms_filename }}
+        id: generated_llms_hash
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -f "${{ inputs.llms_filename }}" ]]; then
+            sha256sum "${{ inputs.llms_filename }}" | awk '{print $1}' > generated_sha256.txt
+          else
+            echo "Error: '${{ inputs.llms_filename }}' not found after generation." >&2
+            exit 1
+          fi
+          echo "Generated hash: $(cat generated_sha256.txt)"
+
+      - name: Compare hashes
+        shell: bash
+        run: |
+          set -euo pipefail
+          generated_hash="$(cat generated_sha256.txt)"
+          pr_hash="$(cat pr_sha256.txt)"
+
+          echo "Generated Hash: $generated_hash"
+          echo "PR Hash:       $pr_hash"
+
+          if [[ "$generated_hash" != "$pr_hash" ]]; then
+            echo "Error: SHA256 hashes do not match. The generated file differs from the one in the PR." >&2
+            echo "You need to run the generator locally:" >&2
+            echo "${{ inputs.generator_command }}" >&2
+            exit 1
+          else
+            echo "✅ SHA256 hashes match. '${{ inputs.llms_filename }}' is consistent."
+          fi
