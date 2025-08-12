@@ -11,6 +11,10 @@ on:
         description: "Command to generate the LLMs file"
         type: string
         default: "python3 scripts/generate_llms.py"
+      extra_pip:
+        description: "Space-separated extra pip packages"
+        type: string
+        default: ""
       require_pr_file:
         description: "Fail if the PR does not include the file"
         type: boolean
@@ -36,6 +40,10 @@ jobs:
           python -m pip install --upgrade pip
           # core deps used by your generators
           pip install pyyaml requests
+          # optional extras (e.g., beautifulsoup4)
+          if [[ -n "${{ inputs.extra_pip }}" ]]; then
+            pip install ${{ inputs.extra_pip }}
+          fi
 
       - name: Get SHA256 of the PR's ${{ inputs.llms_filename }}
         id: pr_llms_hash
