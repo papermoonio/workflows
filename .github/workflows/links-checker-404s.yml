@@ -1,10 +1,9 @@
 name: 'General - Link Check for Documentation Sites'
 
 on:
-  # Runs every day at midnight UTC (00:00).
   schedule:
-    - cron: '0 12 * * 1-5'
-  # Allows you to run this workflow manually from the Actions tab.
+    - cron: '0 12 * * 1-5'  # 12:00 PM UTC, Monday–Friday
+  # Manual run with options.
   workflow_dispatch:
     inputs:
       selected_project:
@@ -36,18 +35,17 @@ jobs:
         run: |
           selected="${{ github.event.inputs.selected_project || 'All' }}"
 
-          # The 'token' key has been removed from this JSON object
           all_projects=$(jq -n '
             [
-              { "mkdocs_repo": "papermoonio/kluster-mkdocs", "docs_repo": "kluster-ai/docs", "mkdocs_repo_name": "kluster-mkdocs", "docs_repo_name": "kluster-docs", "root_dir": "", "label": "kluster.ai" },
-              { "mkdocs_repo": "papermoonio/polkadot-mkdocs", "docs_repo": "polkadot-developers/polkadot-docs", "mkdocs_repo_name": "polkadot-mkdocs", "docs_repo_name": "polkadot-docs", "root_dir": "", "label": "Polkadot" },
-              { "mkdocs_repo": "papermoonio/moonbeam-mkdocs", "docs_repo": "moonbeam-foundation/moonbeam-docs", "mkdocs_repo_name": "moonbeam-mkdocs", "docs_repo_name": "moonbeam-docs", "root_dir": "", "label": "Moonbeam" },
-              { "mkdocs_repo": "papermoonio/tanssi-mkdocs", "docs_repo": "moondance-labs/tanssi-docs", "mkdocs_repo_name": "tanssi-mkdocs", "docs_repo_name": "tanssi-docs", "root_dir": "", "label": "Tanssi" },
-              { "mkdocs_repo": "papermoonio/wormhole-mkdocs", "docs_repo": "wormhole-foundation/wormhole-docs", "mkdocs_repo_name": "wormhole-mkdocs", "docs_repo_name": "wormhole-docs", "root_dir": "/docs", "label": "Wormhole" }
+              { "mkdocs_repo": "papermoonio/kluster-mkdocs",   "docs_repo": "kluster-ai/docs",                 "mkdocs_repo_name": "kluster-mkdocs",   "docs_repo_name": "kluster-docs",   "root_dir": "",      "label": "kluster.ai" },
+              { "mkdocs_repo": "papermoonio/polkadot-mkdocs",  "docs_repo": "polkadot-developers/polkadot-docs","mkdocs_repo_name": "polkadot-mkdocs",  "docs_repo_name": "polkadot-docs",  "root_dir": "",      "label": "Polkadot" },
+              { "mkdocs_repo": "papermoonio/moonbeam-mkdocs",  "docs_repo": "moonbeam-foundation/moonbeam-docs","mkdocs_repo_name": "moonbeam-mkdocs",  "docs_repo_name": "moonbeam-docs",  "root_dir": "",      "label": "Moonbeam" },
+              { "mkdocs_repo": "papermoonio/tanssi-mkdocs",    "docs_repo": "moondance-labs/tanssi-docs",      "mkdocs_repo_name": "tanssi-mkdocs",    "docs_repo_name": "tanssi-docs",    "root_dir": "",      "label": "Tanssi" },
+              { "mkdocs_repo": "papermoonio/wormhole-mkdocs",  "docs_repo": "wormhole-foundation/wormhole-docs","mkdocs_repo_name": "wormhole-mkdocs",  "docs_repo_name": "wormhole-docs",  "root_dir": "/docs", "label": "Wormhole" }
             ]
           ')
 
-          if [ "$selected" == "All" ]; then
+          if [ "$selected" = "All" ]; then
             filtered="$all_projects"
           else
             filtered=$(echo "$all_projects" | jq -c --arg sel "$selected" '[.[] | select(.label == $sel)]')
@@ -66,148 +64,128 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # This fromJson will now work because the input is not redacted
         include: ${{ fromJson(needs.generate-matrix.outputs.matrix) }}
     steps:
-      # Select the correct token based on the matrix label
+      # Choose PAT per project
       - name: Select Token
         id: select_token
         run: |
-          if [ "${{ matrix.label }}" == "Tanssi" ]; then
-            echo "token=${{ secrets.GH_404_CHECKER_TANSSI }}" >> $GITHUB_OUTPUT
+          if [ "${{ matrix.label }}" = "Tanssi" ]; then
+            echo "token=${{ secrets.GH_404_CHECKER_TANSSI }}" >> "$GITHUB_OUTPUT"
           else
-            echo "token=${{ secrets.GH_404_CHECKER }}" >> $GITHUB_OUTPUT
+            echo "token=${{ secrets.GH_404_CHECKER }}" >> "$GITHUB_OUTPUT"
           fi
-      
-      # Check out the MkDocs project repository into a specific directory.
-      - name: 'Checkout MkDocs Repo for ${{ matrix.mkdocs_repo_name }}'
+
+      # Check out repos
+      - name: 'Checkout MkDocs Repo: ${{ matrix.mkdocs_repo_name }}'
         uses: actions/checkout@v4
         with:
           repository: ${{ matrix.mkdocs_repo }}
           path: ${{ matrix.mkdocs_repo_name }}
 
-      # Check out the corresponding documentation content repo into a subdirectory.
-      - name: 'Checkout Docs Content Repo for ${{ matrix.docs_repo_name }}'
+      - name: 'Checkout Docs Content Repo: ${{ matrix.docs_repo_name }}'
         uses: actions/checkout@v4
         with:
           repository: ${{ matrix.docs_repo }}
           path: '${{ matrix.mkdocs_repo_name}}/${{ matrix.docs_repo_name}}'
 
-      # Set up Python environment.
+      # Python + deps
       - name: 'Set up Python'
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
           cache: 'pip'
 
-      # Install Python dependencies from requirements.txt.
       - name: 'Install dependencies'
         working-directory: ${{ matrix.mkdocs_repo_name }}
         run: |
-          pip install --upgrade pip
+          python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # Install MkDocs and the link checker plugin.
+      # Build site (note: some projects publish under a subdir)
       - name: 'Build MkDocs site'
         working-directory: ${{ matrix.mkdocs_repo_name }}
-        run: mkdocs build -d site${{ matrix.root_dir }}
+        run: mkdocs build -d "site${{ matrix.root_dir }}"
 
-      # Prepare arguments for the link checker.
-      - name: Prepare Lychee Arguments
+      # Run lychee ONCE; allow job to continue so we can handle failure ourselves.
+      - name: 'Prepare Lychee Arguments'
         id: lychee_args
+        shell: bash
         run: |
-          ARGS="--root-dir $(pwd)/${{ matrix.mkdocs_repo_name }}/site --verbose --no-progress --accept 429,403"
+          ROOT="$(pwd)/${{ matrix.mkdocs_repo_name }}/site${{ matrix.root_dir }}"
+          ARGS="--root-dir $ROOT --verbose --no-progress --accept 429,403"
           if [[ -f "$(pwd)/${{ matrix.mkdocs_repo_name }}/.urlignore" ]]; then
-            echo "Found .urlignore file. Adding to lychee arguments."
+            echo "Found .urlignore; adding to args."
             ARGS="$ARGS --exclude-file $(pwd)/${{ matrix.mkdocs_repo_name }}/.urlignore"
           fi
-          echo "args=$ARGS" >> $GITHUB_OUTPUT
+          echo "args=$ARGS" >> "$GITHUB_OUTPUT"
 
-      - name: 'Run Link Checker (Attempt 1)'
-        id: lychee1
-        uses: lycheeverse/lychee-action@v2.4.1
-        with:
-          args: >
-            ${{ steps.lychee_args.outputs.args }}
-            './${{ matrix.mkdocs_repo_name }}/site/**/*.html'
-          output: ./${{ matrix.mkdocs_repo_name }}/lychee-report.md
-          fail: true
-        continue-on-error: true
-
-      - name: 'Run Link Checker (Attempt 2)'
-        id: lychee2
-        if: steps.lychee1.outcome == 'failure'
-        uses: lycheeverse/lychee-action@v2.4.1
-        with:
-          args: >
-            ${{ steps.lychee_args.outputs.args }}
-            './${{ matrix.mkdocs_repo_name }}/site/**/*.html'
-          output: ./${{ matrix.mkdocs_repo_name }}/lychee-report.md
-          fail: true
-        continue-on-error: true
-
-      - name: 'Run Link Checker (Attempt 3)'
-        id: lychee3
-        if: steps.lychee2.outcome == 'failure'
-        uses: lycheeverse/lychee-action@v2.4.1
-        with:
-          args: >
-            ${{ steps.lychee_args.outputs.args }}
-            './${{ matrix.mkdocs_repo_name }}/site/**/*.html'
-          output: ./${{ matrix.mkdocs_repo_name }}/lychee-report.md
-          fail: true
-        continue-on-error: true
-
-      - name: Set Final Outcome
+      - name: 'Run Link Checker'
         id: lychee
-        run: |
-          if [[ "${{ steps.lychee3.outcome }}" == "failure" ]]; then
-            echo "outcome=failure" >> $GITHUB_OUTPUT
-          else
-            echo "outcome=success" >> $GITHUB_OUTPUT
-          fi
+        uses: lycheeverse/lychee-action@v2.4.1
+        with:
+          args: >
+            ${{ steps.lychee_args.outputs.args }}
+            './**/*.html'
+          # Write a Markdown report beside the site
+          output: ./${{ matrix.mkdocs_repo_name }}/lychee-report.md
+          # Non-zero exit if broken links found (so this step "fails")
+          fail: true
+          # Optional: lower concurrency a bit to be nice to hosts
+          # threads: 4
+        continue-on-error: true
 
-      # If the link checker fails, read the report and create a GitHub issue.
+      # Only run if lychee step failed (built-in)
       - name: 'Read Link Checker Report'
-        if: steps.lychee.outputs.outcome == 'failure'
+        if: failure()
         id: report
         run: |
-          report_body=$(cat ./${{ matrix.mkdocs_repo_name }}/lychee-report.md)
+          report_path="./${{ matrix.mkdocs_repo_name }}/lychee-report.md"
+          if [ ! -s "$report_path" ]; then
+            echo "No lychee report found; something else failed."
+            echo "body=Link checker failed but no report was generated." >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          report_body=$(cat "$report_path")
           report_cleaned=$(echo "$report_body" | sed 's/^\s*//;s/\s*$//')
-          
+
           {
             echo "body<<EOF"
             echo "### 🚨 Broken Links Detected in ${{ matrix.label }} Docs"
-            echo ""
+            echo
             echo "The scheduled link checker has found one or more broken links."
             echo "This issue was automatically generated by the [central docs workflow](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})."
-            echo ""
+            echo
             echo "---"
-            echo ""
-            echo "#### 📝 Link Checker Report:"
-            echo ""
+            echo
+            echo "#### 📝 Link Checker Report"
+            echo
             echo "$report_cleaned"
-            echo ""
+            echo
             echo "---"
             echo "#### Next Steps"
-            echo "1.  **Investigate**: Check if the links are temporarily down or permanently gone."
-            echo "2.  **Fix**: Update the source markdown files in this repository."
-            echo "3.  **Close**: Once fixed, this issue can be closed."
+            echo "1. **Investigate**: Check if the links are temporarily down or permanently gone."
+            echo "2. **Fix**: Update the source markdown files in this repository."
+            echo "3. **Close**: Once fixed, this issue can be closed."
             echo "EOF"
+          } >> "$GITHUB_OUTPUT"
 
-            echo "report_content<<EOF"
-            echo "$report_cleaned"
-            echo "EOF"
-          } >> $GITHUB_OUTPUT
-
-      # Create a GitHub issue only if broken links are detected.
-      - name: Create Issue on Failure
-        if: steps.lychee.outcome == 'failure' && ((github.event_name == 'workflow_dispatch' && github.event.inputs.create_issue == 'true') || github.event_name == 'schedule')
+      # Create the issue only when:
+      #  - lychee failed (failure()), and
+      #  - manual run requested issue creation, OR it's a scheduled run.
+      - name: 'Create Issue on Failure'
+        if: >
+          failure() &&
+          (
+            (github.event_name == 'workflow_dispatch' && github.event.inputs.create_issue == 'true') ||
+            (github.event_name == 'schedule')
+          )
         id: create_issue
         env:
           GH_TOKEN: ${{ steps.select_token.outputs.token }}
         run: |
           gh issue create \
             --repo "${{ matrix.docs_repo }}" \
-            --title "Broken Links Detected on $(date +'%Y-%m-%d')" \
+            --title "Broken Links Detected in ${{ matrix.label }} – $(date -u +'%Y-%m-%d')" \
             --body "${{ steps.report.outputs.body }}"
