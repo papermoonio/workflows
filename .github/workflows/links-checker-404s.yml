@@ -3,7 +3,6 @@ name: 'General - Link Check for Documentation Sites'
 on:
   schedule:
     - cron: '0 12 * * 1-5'  # 12:00 PM UTC, Monday–Friday
-  # Manual run with options.
   workflow_dispatch:
     inputs:
       selected_project:
@@ -37,11 +36,11 @@ jobs:
 
           all_projects=$(jq -n '
             [
-              { "mkdocs_repo": "papermoonio/kluster-mkdocs",   "docs_repo": "kluster-ai/docs",                 "mkdocs_repo_name": "kluster-mkdocs",   "docs_repo_name": "kluster-docs",   "root_dir": "",      "label": "kluster.ai" },
+              { "mkdocs_repo": "papermoonio/kluster-mkdocs",   "docs_repo": "kluster-ai/docs",                  "mkdocs_repo_name": "kluster-mkdocs",   "docs_repo_name": "kluster-docs",   "root_dir": "",      "label": "kluster.ai" },
               { "mkdocs_repo": "papermoonio/polkadot-mkdocs",  "docs_repo": "polkadot-developers/polkadot-docs","mkdocs_repo_name": "polkadot-mkdocs",  "docs_repo_name": "polkadot-docs",  "root_dir": "",      "label": "Polkadot" },
               { "mkdocs_repo": "papermoonio/moonbeam-mkdocs",  "docs_repo": "moonbeam-foundation/moonbeam-docs","mkdocs_repo_name": "moonbeam-mkdocs",  "docs_repo_name": "moonbeam-docs",  "root_dir": "",      "label": "Moonbeam" },
-              { "mkdocs_repo": "papermoonio/tanssi-mkdocs",    "docs_repo": "moondance-labs/tanssi-docs",      "mkdocs_repo_name": "tanssi-mkdocs",    "docs_repo_name": "tanssi-docs",    "root_dir": "",      "label": "Tanssi" },
-              { "mkdocs_repo": "papermoonio/wormhole-mkdocs",  "docs_repo": "wormhole-foundation/wormhole-docs","mkdocs_repo_name": "wormhole-mkdocs",  "docs_repo_name": "wormhole-docs",  "root_dir": "/docs", "label": "Wormhole" }
+              { "mkdocs_repo": "papermoonio/tanssi-mkdocs",    "docs_repo": "moondance-labs/tanssi-docs",       "mkdocs_repo_name": "tanssi-mkdocs",    "docs_repo_name": "tanssi-docs",    "root_dir": "",      "label": "Tanssi" },
+              { "mkdocs_repo": "papermoonio/wormhole-mkdocs",  "docs_repo": "wormhole-foundation/wormhole-docs","mkdocs_repo_name": "wormhole-mkdocs",  "docs_repo_name": "wormhole-docs",  "root_dir": "/docs", "label": "Wornhole" }
             ]
           ')
 
@@ -66,7 +65,6 @@ jobs:
       matrix:
         include: ${{ fromJson(needs.generate-matrix.outputs.matrix) }}
     steps:
-      # Choose PAT per project
       - name: Select Token
         id: select_token
         run: |
@@ -76,7 +74,6 @@ jobs:
             echo "token=${{ secrets.GH_404_CHECKER }}" >> "$GITHUB_OUTPUT"
           fi
 
-      # Check out repos
       - name: 'Checkout MkDocs Repo: ${{ matrix.mkdocs_repo_name }}'
         uses: actions/checkout@v4
         with:
@@ -89,7 +86,6 @@ jobs:
           repository: ${{ matrix.docs_repo }}
           path: '${{ matrix.mkdocs_repo_name}}/${{ matrix.docs_repo_name}}'
 
-      # Python + deps
       - name: 'Set up Python'
         uses: actions/setup-python@v5
         with:
@@ -102,12 +98,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # Build site (note: some projects publish under a subdir)
       - name: 'Build MkDocs site'
         working-directory: ${{ matrix.mkdocs_repo_name }}
         run: mkdocs build -d "site${{ matrix.root_dir }}"
 
-      # Run lychee ONCE; allow job to continue so we can handle failure ourselves.
       - name: 'Prepare Lychee Arguments'
         id: lychee_args
         shell: bash
@@ -120,6 +114,7 @@ jobs:
           fi
           echo "args=$ARGS" >> "$GITHUB_OUTPUT"
 
+      # Let this step FAIL (no continue-on-error), then use `always()` later.
       - name: 'Run Link Checker'
         id: lychee
         uses: lycheeverse/lychee-action@v2.4.1
@@ -127,22 +122,16 @@ jobs:
           args: >
             ${{ steps.lychee_args.outputs.args }}
             './**/*.html'
-          # Write a Markdown report beside the site
           output: ./${{ matrix.mkdocs_repo_name }}/lychee-report.md
-          # Non-zero exit if broken links found (so this step "fails")
           fail: true
-          # Optional: lower concurrency a bit to be nice to hosts
-          # threads: 4
-        continue-on-error: true
 
-      # Only run if lychee step failed (built-in)
+      # These next steps must run even if the previous step failed.
       - name: 'Read Link Checker Report'
-        if: failure()
+        if: always() && steps.lychee.conclusion == 'failure'
         id: report
         run: |
           report_path="./${{ matrix.mkdocs_repo_name }}/lychee-report.md"
           if [ ! -s "$report_path" ]; then
-            echo "No lychee report found; something else failed."
             echo "body=Link checker failed but no report was generated." >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -171,12 +160,10 @@ jobs:
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
-      # Create the issue only when:
-      #  - lychee failed (failure()), and
-      #  - manual run requested issue creation, OR it's a scheduled run.
       - name: 'Create Issue on Failure'
         if: >
-          failure() &&
+          always() &&
+          steps.lychee.conclusion == 'failure' &&
           (
             (github.event_name == 'workflow_dispatch' && github.event.inputs.create_issue == 'true') ||
             (github.event_name == 'schedule')
