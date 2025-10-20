@@ -10,6 +10,8 @@ Behavior:
 - Renamed files: Creates automatic redirects from old paths to new paths
 - Updates existing redirects that pointed to changed files
 
+**Run this command from the `*-mkdocs` directory where `redirects.json` is located.**
+
 Usage:
     python utility_scripts/update_redirects.py <PR_NUMBER> <OWNER> <REPO>
 
