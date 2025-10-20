@@ -22,10 +22,10 @@ Example:
     python utility_scripts/update_redirects.py 42 polkadot-developers polkadot-docs
 
 Remote usage:
-    python3 <(curl -s https://raw.githubusercontent.com/papermoonio/workflows/eshaben/redirects/utility_scripts/update_redirects.py) 42 polkadot-developers polkadot-docs
+    python3 <(curl -s https://raw.githubusercontent.com/papermoonio/workflows/main/utility_scripts/update_redirects.py) 42 polkadot-developers polkadot-docs
 
 Create an alias:
-    alias update_redirects='python3 <(curl -s https://raw.githubusercontent.com/papermoonio/workflows/eshaben/redirects/utility_scripts/update_redirects.py)'
+    alias update_redirects='python3 <(curl -s https://raw.githubusercontent.com/papermoonio/workflows/main/utility_scripts/update_redirects.py)'
     update_redirects 42 polkadot-developers polkadot-docs
 
 Alias usage:
