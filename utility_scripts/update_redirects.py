@@ -2,12 +2,12 @@
 Update Redirects Script
 
 Automatically updates the `redirects.json` file based on changes in a pull request.
-Analyzes PR changes to maintain proper URL redirects when documentation files are 
+Analyzes PR changes to maintain proper URL redirects when documentation files are
 moved or removed.
 
 Behavior:
 - Removed files: Adds redirects with "TODO: UPDATE_ME" placeholders for human review
-- Renamed files: Creates automatic redirects from old paths to new paths  
+- Renamed files: Creates automatic redirects from old paths to new paths
 - Updates existing redirects that pointed to changed files
 
 Usage:
@@ -15,7 +15,7 @@ Usage:
 
 Arguments:
     PR_NUMBER    Pull request number to analyze
-    OWNER        GitHub repository owner/organization  
+    OWNER        GitHub repository owner/organization
     REPO         GitHub repository name
 
 Example:
@@ -30,14 +30,13 @@ Create an alias:
 
 Alias usage:
     update_redirects 42 polkadot-developers polkadot-docs
-    
+
 Features:
 - Automatic redirect generation for renamed and removed files
 - Ignores images, js, scripts, run folders and hidden files
 - Updates existing redirects pointing to changed files
 - Provides detailed statistics and feedback
 """
-
 
 import json
 import sys
