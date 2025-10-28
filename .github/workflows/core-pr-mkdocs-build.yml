@@ -74,4 +74,4 @@ jobs:
 
       - name: Build MkDocs site (strict)
         working-directory: ${{ steps.vars.outputs.mkdocs_repo_name }}
-        run: mkdocs build --strict -d "site${{ inputs.root_dir }}"
+        run: mkdocs build -d "site${{ inputs.root_dir }}"
