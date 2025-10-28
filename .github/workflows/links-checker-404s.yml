@@ -138,7 +138,7 @@ jobs:
       # Backoff
       - name: Backoff
         if: steps.lychee1.outcome == 'failure'
-        run: sleep 10
+        run: sleep 60
       
       # Attempt 2 (only if 1 failed)
       - name: Run Link Checker (Attempt 2)
