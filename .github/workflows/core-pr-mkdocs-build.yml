@@ -72,6 +72,6 @@ jobs:
           pip install --upgrade pip
           pip install -r "${{ inputs.requirements_path }}"
 
-      - name: Build MkDocs site (strict)
+      - name: Build MkDocs site
         working-directory: ${{ steps.vars.outputs.mkdocs_repo_name }}
         run: mkdocs build -d "site${{ inputs.root_dir }}"
