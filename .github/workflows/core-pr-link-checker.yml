@@ -16,6 +16,10 @@ on:
         required: true
         type: string
         description: 'The base URL of the deployed docs site (e.g., https://docs.tanssi.network)'
+      root_dir:
+        required: false
+        type: string
+        default: ""
     secrets:
       GH_TOKEN:
         required: true
@@ -63,7 +67,7 @@ jobs:
       # Step 4: Build the MkDocs site
       - name: 'Build MkDocs site'
         working-directory: ${{ steps.vars.outputs.mkdocs_repo_name }}
-        run: mkdocs build -d site
+        run: mkdocs build -d site${{ inputs.root_dir }}
 
       # Step 5: Detect documentation file changes (added, modified, renamed)
       - name: 'Detect documentation file changes'
@@ -177,33 +181,31 @@ jobs:
           echo "exclude_args=$EXCLUDE_ARGS" >> $GITHUB_OUTPUT
 
       # Step 7: Prepare lychee arguments
-      - name: 'Prepare lychee arguments'
+       - name: 'Prepare lychee arguments'
         id: lychee_args
         env:
           MKDOCS_REPO_NAME: ${{ steps.vars.outputs.mkdocs_repo_name }}
           EXCLUDE_ARGS: ${{ steps.link_checking.outputs.exclude_args }}
+          ROOT_DIR: ${{ inputs.root_dir }}
         run: |
-          # Start with base arguments
-          ARGS="--root-dir ${{ github.workspace }}/${MKDOCS_REPO_NAME}/site --no-progress --accept 429,403"
+          ROOT="${{ github.workspace }}/${MKDOCS_REPO_NAME}/site${ROOT_DIR}"
+          ARGS="--root-dir $ROOT --no-progress --accept 429,403"
 
-          # Add .urlignore file if it exists
           URLIGNORE_PATH="${{ github.workspace }}/${MKDOCS_REPO_NAME}/.urlignore"
           if [[ -f "$URLIGNORE_PATH" ]]; then
             echo "Found .urlignore file. Adding to lychee arguments."
             ARGS="$ARGS --exclude-file $URLIGNORE_PATH"
           fi
 
-          # Add exclude arguments from changed files
-          if [[ -n "$EXCLUDE_ARGS" ]]; then
+          if [[ -n "${EXCLUDE_ARGS:-}" ]]; then
             echo "Adding exclude arguments for changed files: $EXCLUDE_ARGS"
             ARGS="$ARGS $EXCLUDE_ARGS"
           fi
 
-          # Append the final target glob pattern for lychee to scan
-          ARGS="$ARGS '${{ github.workspace }}/${MKDOCS_REPO_NAME}/site/**/*.html'"
-
+          # Let lychee scan the generated HTML
+          ARGS="$ARGS $ROOT/**/*.html"
           echo "args=$ARGS" >> $GITHUB_OUTPUT
-
+          
       # Step 8: Run the link checker
       # This step executes lychee with all the prepared arguments, including exclusions
       # for changed files to prevent false positives during documentation updates
