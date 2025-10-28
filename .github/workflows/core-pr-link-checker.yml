@@ -19,7 +19,7 @@ on:
       root_dir:
         required: false
         type: string
-        default: ""
+        default: ''
     secrets:
       GH_TOKEN:
         required: true
@@ -79,12 +79,10 @@ jobs:
             **/*.ipynb
             **/*.webp
             **/*.png
-          # No files_filter to get all changes (A=added, M=modified, D=deleted, R=renamed)
+          # (Note: the action's input is 'working-directory' in docs; underscore still parses, but hyphen is canonical)
           working_directory: ${{ steps.vars.outputs.mkdocs_repo_name }}/${{ steps.vars.outputs.docs_checkout_path }}
 
       # Step 6: Handle link checking for changed files
-      # This step analyzes changed documentation files and determines which URLs should be
-      # excluded from link checking to prevent false positives during transitions
       - name: 'Handle link checking for changed files'
         id: link_checking
         env:
@@ -93,74 +91,50 @@ jobs:
           MKDOCS_REPO_NAME: ${{ steps.vars.outputs.mkdocs_repo_name }}
           BASE_URL: ${{ inputs.url }}
         run: |
-
-          
           # Validate required environment variables
           if [[ -z "$BASE_URL" ]]; then
             echo "❌ Error: BASE_URL is not set"
             exit 1
           fi
 
-          # Function to convert file path to URL path
           convert_to_url_path() {
             local file="$1"
-            
-            # Check if the file path starts with a dot (private/hidden files)
             if [[ "$file" =~ ^\. ]]; then
               echo ""
               return
             fi
-            
-            # Handle index files and remove extensions
-            local url_path=$(echo "$file" | sed -e "s/index\.\(md\|ipynb\|webp\|png\)$//" \
-                                    -e "s/\.\(md\|ipynb\|webp\|png\)$//" \
-                                    -e 's/\/$//')
+            local url_path
+            url_path=$(echo "$file" | sed -e "s/index\.\(md\|ipynb\|webp\|png\)$//" \
+                                          -e "s/\.\(md\|ipynb\|webp\|png\)$//" \
+                                          -e 's/\/$//')
             echo "$url_path"
           }
 
-          # Function to process a single file and add to exclude args
           process_file() {
             local file="$1"
-            
             URL_PATH=$(convert_to_url_path "$file")
-            
-            # Skip files that start with a dot (private/hidden files)
             if [[ -z "$URL_PATH" ]]; then
               echo "  ⏭️  $file → (private file, skipping)"
               return
             fi
-            
-            # Exclude URLs for added and renamed files
-            # - Added files: don't exist on live site yet
-            # - Renamed files: new location doesn't exist on live site yet
             EXCLUDED_URL="${BASE_URL}/${URL_PATH}/"
             echo "  🚫 $file → $EXCLUDED_URL"
             EXCLUDE_ARGS="$EXCLUDE_ARGS --exclude $EXCLUDED_URL"
           }
 
-          # Build exclude arguments for lychee
           EXCLUDE_ARGS=""
 
-          # Handle added files (exclude from link checking)
           if [[ -n "$ADDED_FILES" ]]; then
             echo "🔗 Excluding URLs for new pages found in this PR:"
-            for file in $ADDED_FILES; do
-              [[ -n "$file" ]] && process_file "$file"
-            done
+            for file in $ADDED_FILES; do [[ -n "$file" ]] && process_file "$file"; done
           fi
 
-          # Handle renamed files (exclude new URL path)
           if [[ -n "$RENAMED_FILES" ]]; then
             echo "🔗 Excluding URLs for renamed pages found in this PR:"
             for file in $RENAMED_FILES; do
               [[ -n "$file" ]] || continue
-              
-              # For renamed files, extract the new path
-              # The renamed_files output contains "old_path -> new_path" format
               NEW_PATH=$(echo "$file" | sed 's/^.* -> //')
-              
               if [[ -n "$NEW_PATH" ]]; then
-                # Process the new path (exclude if it's not a private file)
                 process_file "$NEW_PATH"
               else
                 echo "  ⚠️  Warning: Could not parse renamed file entry: $file"
@@ -168,11 +142,9 @@ jobs:
             done
           fi
 
-          # Summary and output
           if [[ -z "$ADDED_FILES" && -z "$RENAMED_FILES" ]]; then
             echo "✅ No documentation files were changed in this PR."
           else
-            # Count files safely
             ADDED_COUNT=$(echo "$ADDED_FILES" | tr -s ' ' '\n' | grep -c . || echo "0")
             RENAMED_COUNT=$(echo "$RENAMED_FILES" | tr -s ' ' '\n' | grep -c . || echo "0")
             echo "📊 Summary: Processed $ADDED_COUNT added and $RENAMED_COUNT renamed files"
@@ -180,8 +152,8 @@ jobs:
 
           echo "exclude_args=$EXCLUDE_ARGS" >> $GITHUB_OUTPUT
 
-      # Step 7: Prepare lychee arguments
-       - name: 'Prepare lychee arguments'
+      # Step 7: Prepare lychee arguments  (← align the dash with other steps)
+      - name: 'Prepare lychee arguments'
         id: lychee_args
         env:
           MKDOCS_REPO_NAME: ${{ steps.vars.outputs.mkdocs_repo_name }}
@@ -202,13 +174,11 @@ jobs:
             ARGS="$ARGS $EXCLUDE_ARGS"
           fi
 
-          # Let lychee scan the generated HTML
+          # Let lychee scan the generated HTML (no quotes so the glob expands)
           ARGS="$ARGS $ROOT/**/*.html"
           echo "args=$ARGS" >> $GITHUB_OUTPUT
-          
+
       # Step 8: Run the link checker
-      # This step executes lychee with all the prepared arguments, including exclusions
-      # for changed files to prevent false positives during documentation updates
       - name: 'Run Link Checker (lychee)'
         uses: lycheeverse/lychee-action@v2.4.1
         with:
