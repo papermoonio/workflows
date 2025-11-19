@@ -72,25 +72,6 @@ jobs:
                   const maxChars = 6000;
                   log = snippet.length > maxChars ? snippet.slice(-maxChars) : snippet;
                 }
-                const errorRegex = /^(?<file>[^:]+):(?<line>\d+):\d+\s+-\s+error\s+[A-Z]+\d+:\s+(?<message>.+)$/;
-                const matches = lines
-                  .map((line) => line.trim())
-                  .map((line) => line.match(errorRegex))
-                  .filter(Boolean)
-                  .map((match) => ({
-                    file: match.groups.file,
-                    line: match.groups.line,
-                    message: match.groups.message
-                  }));
-                if (matches.length > 0) {
-                  const heading = matches.length === 1 ? '1 error' : `${matches.length} errors`;
-                  const detailLines = matches
-                    .slice(0, 5)
-                    .flatMap(({ file, line, message }) => [
-                      `typecheck-latest: ${file}#L${line}`,
-                      message
-                    ]);
-                }
               } catch (readError) {
                 core.warning(`Unable to read typecheck output: ${readError.message}`);
               }
