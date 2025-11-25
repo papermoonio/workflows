@@ -17,38 +17,49 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # Fetch repository code
       - name: Checkout repo
         uses: actions/checkout@v4
 
+      # Install Node.js runtime with npm cache
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: 'npm'
 
+      # Install dependencies from lockfile
       - name: Install dependencies (locked versions)
         run: npm ci
 
-      - name: Override Wormhole SDK to @latest (no lockfile changes)
+      # Override Wormhole SDK to latest without persisting to lockfile
+      - name: Override Wormhole SDK to @latest
         run: |
-          npm install --no-save @wormhole-foundation/sdk@latest
-          npm ls @wormhole-foundation/sdk --depth=0
+          npm install --no-save --force @wormhole-foundation/sdk@latest
+          npm ls @wormhole-foundation/sdk --depth=0 || true
 
+      # Run typecheck, capture logs, and record result
       - name: Type check against latest SDK
         id: typecheck
+        continue-on-error: true # allow flow to continue even when typecheck fails
         run: |
           set -o pipefail
+          set +e
           npm run typecheck 2>&1 | tee typecheck.log
           exit_code=${PIPESTATUS[0]}
+          set -e
           tail -n 200 typecheck.log > typecheck.tail.log || true
-          printf 'exit_code=%s\n' "$exit_code" >> "$GITHUB_OUTPUT"
-          log="$(cat typecheck.tail.log 2>/dev/null || true)"
-          printf 'log<<EOF\n%s\nEOF\n' "$log" >> "$GITHUB_OUTPUT"
-          printf 'failed=%s\n' "$( [ "$exit_code" -ne 0 ] && echo true || echo false )" >> "$GITHUB_OUTPUT"
-          exit 0
+          {
+            printf 'exit_code=%s\n' "$exit_code"
+            printf 'failed=%s\n' "$( [ "$exit_code" -ne 0 ] && echo true || echo false )"
+            printf 'log<<EOF\n'
+            cat typecheck.tail.log 2>/dev/null || true
+            printf '\nEOF\n'
+          } >> "$GITHUB_OUTPUT"
 
-      - name: Open issue if typecheck fails (scheduled run)
-        if: ${{ failure() && github.event_name == 'schedule' }}
+      # Open a GitHub issue when typecheck fails on schedule or manual run
+      - name: Create issue on failure
+        if: steps.typecheck.outputs.failed == 'true' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
         uses: actions/github-script@v7
         with:
           github-token: ${{ github.token }}
@@ -100,5 +111,5 @@ jobs:
             }
 
       - name: Fail job when typecheck fails
-        if: failure()
+        if: steps.typecheck.outputs.failed == 'true'
         run: exit 1
