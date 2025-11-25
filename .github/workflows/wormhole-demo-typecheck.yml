@@ -77,12 +77,11 @@ jobs:
               let log = '(no output captured)';
               try {
                 const rawLog = fs.readFileSync(logPath, 'utf8');
-                const lines = rawLog.split(/\r?\n/);
+                const maxChars = 6000;
+                const truncatedRaw = rawLog.length > maxChars ? rawLog.slice(-maxChars) : rawLog;
+                const lines = truncatedRaw.split(/\r?\n/);
                 const snippet = lines.slice(-200).join('\n').trim();
-                if (snippet.length > 0) {
-                  const maxChars = 6000;
-                  log = snippet.length > maxChars ? snippet.slice(-maxChars) : snippet;
-                }
+                if (snippet.length > 0) log = snippet;
               } catch (readError) {
                 core.warning(`Unable to read typecheck output: ${readError.message}`);
               }
