@@ -1,12 +1,7 @@
 name: Wormhole - SDK Type Check
 
 on:
-  pull_request:
-    branches:
-      - main
-  schedule:
-    - cron: '0 6 * * 1' # 6:00 UTC, weekly (Monday)
-  workflow_dispatch: # Allows manual trigger from the GitHub Actions tab
+  workflow_call:
 
 permissions:
   contents: read
