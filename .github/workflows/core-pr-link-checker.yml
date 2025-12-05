@@ -74,13 +74,13 @@ jobs:
         id: changed_files
         uses: tj-actions/changed-files@v44
         with:
+          # Limit the repo being inspected to the docs repo checkout
+          path: ${{ steps.vars.outputs.mkdocs_repo_name }}/${{ steps.vars.outputs.docs_checkout_path }}
           files: |
             **/*.md
             **/*.ipynb
             **/*.webp
             **/*.png
-          # (Note: the action's input is 'working-directory' in docs; underscore still parses, but hyphen is canonical)
-          working_directory: ${{ steps.vars.outputs.mkdocs_repo_name }}/${{ steps.vars.outputs.docs_checkout_path }}
 
       # Step 6: Handle link checking for changed files
       - name: 'Handle link checking for changed files'
