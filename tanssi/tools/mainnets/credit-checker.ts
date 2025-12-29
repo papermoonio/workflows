@@ -92,8 +92,9 @@ yargs(hideBin(process.argv))
           // Format the balance with token decimals
           const decimals = api.registry.chainDecimals[0] || 12;
           const symbol = api.registry.chainTokens[0] || 'UNIT';
-          const formattedBalance = (BigInt(freeBalance) / BigInt(10 ** decimals)).toString();
-          const remainder = (BigInt(freeBalance) % BigInt(10 ** decimals)).toString().padStart(decimals, '0');
+          const decimalsFactor = BigInt(10) ** BigInt(decimals);
+          const formattedBalance = (BigInt(freeBalance) / decimalsFactor).toString();
+          const remainder = (BigInt(freeBalance) % decimalsFactor).toString().padStart(decimals, '0');
 
           // Calculate remaining days
           // Days from credits: credits / BLOCKS_PER_DAY
