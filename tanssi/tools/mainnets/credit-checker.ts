@@ -90,7 +90,7 @@ yargs(hideBin(process.argv))
           const credits = blockProductionCredits.toString();
 
           // Format the balance with token decimals
-          const decimals = api.registry.chainDecimals[0] || 12;
+          const decimals = api.registry.chainDecimals?.[0] ?? 12;
           const symbol = api.registry.chainTokens[0] || 'UNIT';
           const decimalsFactor = BigInt(10) ** BigInt(decimals);
           const formattedBalance = (BigInt(freeBalance) / decimalsFactor).toString();
@@ -100,8 +100,9 @@ yargs(hideBin(process.argv))
           // Days from credits: credits / BLOCKS_PER_DAY
           // Days from balance: balance / (daily cost from blocks + daily cost from collator assignment)
           // Collator assignment is charged every 6 hours (4 times per day)
-          const daysFromCredits = Number(credits) / config.blocksPerDay;
-          const balanceInTokens = Number(freeBalance) / (10 ** decimals);
+          const creditsBigInt = BigInt(credits);
+          const daysFromCredits = Number(creditsBigInt) / config.blocksPerDay;
+          const balanceInTokens = Number(BigInt(freeBalance) / decimalsFactor);
           const dailyCost = config.costPerBlock * config.blocksPerDay + config.costCollatorAssignment * 4;
           const daysFromBalance = balanceInTokens / dailyCost;
           const totalRemainingDays = daysFromCredits + daysFromBalance;
@@ -150,8 +151,9 @@ yargs(hideBin(process.argv))
               
               // Send to broadcast teams with general message
               if (broadcastTeams.length > 0) {
+                const teamNameInfo = team ? ` (*${team.name}*)` : '';
                 let broadcastMessage = `⚠️ *Low Credits Alert*\n\n` +
-                    `A *${networkName}* chain with ID *${paraId}* (*${team?.name}*) is running low on credits.\n\n` +
+                    `A *${networkName}* chain with ID *${paraId}*${teamNameInfo} is running low on credits.\n\n` +
                     `*Remaining Days:* ${totalRemainingDays.toFixed(2)}`;
                 
                 // Add warning if team not found or notification failed

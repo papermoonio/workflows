@@ -24,13 +24,11 @@ export const NETWORK_YARGS_OPTIONS: NetworkOptions = {
     type: 'string',
     choices: NETWORK_NAMES,
     description: 'Network to connect to',
-    string: true,
     default: 'tanssi',
   },
   threshold: {
     type: 'number',
     description: 'Alert threshold in days (overrides chain config)',
-    number: true,
   },
 };
 
