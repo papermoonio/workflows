@@ -1,0 +1,48 @@
+name: Check Credits
+
+on:
+  workflow_dispatch:
+    inputs:
+      network:
+        description: 'Network to check'
+        required: true
+        type: choice
+        options:
+          - tanssi
+          - dancelight
+          - flashbox
+        default: 'tanssi'
+      threshold:
+        description: 'Alert threshold in days (optional, uses chain config default if not specified)'
+        required: false
+        type: number
+  schedule:
+    # Run once a day at midnight UTC
+    - cron: '0 0 * * *'
+
+jobs:
+  check-credits:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      
+      - name: Install dependencies
+        run: npm ci
+      
+      - name: Check credits
+        env:
+          BOT_ID_TEAMS_IDS: ${{ secrets.BOT_ID_TEAMS_IDS }}
+        run: |
+          if [ -n "${{ inputs.threshold }}" ]; then
+            npm run check-credits -- --network ${{ inputs.network || 'tanssi' }} --threshold ${{ inputs.threshold }}
+          else
+            npm run check-credits -- --network ${{ inputs.network || 'tanssi' }}
+          fi
