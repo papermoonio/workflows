@@ -74,7 +74,7 @@ yargs(hideBin(process.argv))
         process.stdout.write(`Found ${paraIds.length} registered container chain(s)\n\n`);
 
         // Get the SS58 prefix for proper address formatting
-        const ss58Format = api.registry.chainSS58 || 42;
+        const ss58Format = api.registry.chainSS58?.[0] ?? 42;
 
         for (const paraId of paraIds) {
           // Derive the tank account for this para ID
