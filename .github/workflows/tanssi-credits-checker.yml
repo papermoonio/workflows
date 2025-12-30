@@ -1,4 +1,4 @@
-name: Check Credits
+name: Tanssi - Check Credits
 
 on:
   workflow_dispatch:
