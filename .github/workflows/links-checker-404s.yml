@@ -23,6 +23,16 @@ on:
         required: false
         type: boolean
         default: true
+      mkdocs_branch:
+        description: 'MkDocs repo branch to use (only when running a specific project)'
+        required: false
+        type: string
+        default: ''
+      docs_branch:
+        description: 'Docs content repo branch to use (only when running a specific project)'
+        required: false
+        type: string
+        default: ''
 
 jobs:
   generate-matrix:
@@ -78,19 +88,54 @@ jobs:
           else
             echo "token=${{ secrets.GH_404_CHECKER }}" >> $GITHUB_OUTPUT
           fi
-      
+
+      - name: Resolve branches/refs for this run
+        id: refs
+        shell: bash
+        run: |
+          selected="${{ github.event.inputs.selected_project || 'All' }}"
+          mkdocs_ref="${{ github.event.inputs.mkdocs_branch || '' }}"
+          docs_ref="${{ github.event.inputs.docs_branch || '' }}"
+
+          # Only honor these inputs for manual runs targeting a single project
+          if [[ "${{ github.event_name }}" != "workflow_dispatch" || "$selected" == "All" ]]; then
+            mkdocs_ref=""
+            docs_ref=""
+          fi
+
+          echo "mkdocs_ref=$mkdocs_ref" >> "$GITHUB_OUTPUT"
+          echo "docs_ref=$docs_ref" >> "$GITHUB_OUTPUT"
+
       # Check out the MkDocs project repository into a specific directory.
-      - name: 'Checkout MkDocs Repo for ${{ matrix.mkdocs_repo_name }}'
+      - name: 'Checkout MkDocs Repo for ${{ matrix.mkdocs_repo_name }} (default branch)'
+        if: steps.refs.outputs.mkdocs_ref == ''
         uses: actions/checkout@v4
         with:
           repository: ${{ matrix.mkdocs_repo }}
           path: ${{ matrix.mkdocs_repo_name }}
 
+      - name: 'Checkout MkDocs Repo for ${{ matrix.mkdocs_repo_name }} (ref: ${{ steps.refs.outputs.mkdocs_ref }})'
+        if: steps.refs.outputs.mkdocs_ref != ''
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ matrix.mkdocs_repo }}
+          ref: ${{ steps.refs.outputs.mkdocs_ref }}
+          path: ${{ matrix.mkdocs_repo_name }}
+
       # Check out the corresponding documentation content repo into a subdirectory.
-      - name: 'Checkout Docs Content Repo for ${{ matrix.docs_repo_name }}'
+      - name: 'Checkout Docs Content Repo for ${{ matrix.docs_repo_name }} (default branch)'
+        if: steps.refs.outputs.docs_ref == ''
         uses: actions/checkout@v4
         with:
           repository: ${{ matrix.docs_repo }}
+          path: '${{ matrix.mkdocs_repo_name}}/${{ matrix.docs_repo_name}}'
+
+      - name: 'Checkout Docs Content Repo for ${{ matrix.docs_repo_name }} (ref: ${{ steps.refs.outputs.docs_ref }})'
+        if: steps.refs.outputs.docs_ref != ''
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ matrix.docs_repo }}
+          ref: ${{ steps.refs.outputs.docs_ref }}
           path: '${{ matrix.mkdocs_repo_name}}/${{ matrix.docs_repo_name}}'
 
       # Set up Python environment.
@@ -134,16 +179,33 @@ jobs:
           output: ./${{ matrix.mkdocs_repo_name }}/lychee-report.md
           fail: true
         continue-on-error: true
-      
+
       # Backoff
       - name: Backoff
         if: steps.lychee1.outcome == 'failure'
         run: sleep 60
-      
-      # Attempt 2 (only if 1 failed)
+
+      # Attempt 2
       - name: Run Link Checker (Attempt 2)
         id: lychee2
-        if: steps.lychee1.outcome == 'failure'
+        uses: lycheeverse/lychee-action@v2.4.1
+        with:
+          args: >
+            ${{ steps.lychee_args.outputs.args }}
+            './${{ matrix.mkdocs_repo_name }}/site/**/*.html'
+          output: ./${{ matrix.mkdocs_repo_name }}/lychee-report.md
+          fail: true
+        continue-on-error: true
+
+      # Backoff
+      - name: Backoff
+        if: steps.lychee2.outcome == 'failure'
+        run: sleep 60
+
+      # Attempt 3 (only if 1 failed)
+      - name: Run Link Checker (Attempt 2)
+        id: lychee3
+        if: steps.lychee2.outcome == 'failure'
         uses: lycheeverse/lychee-action@v2.4.1
         with:
           args: >
@@ -156,7 +218,7 @@ jobs:
       - name: Set Final Outcome
         id: lychee
         run: |
-          if [[ "${{ steps.lychee2.outcome }}" == "failure" ]]; then
+          if [[ "${{ steps.lychee3.outcome }}" == "failure" ]]; then
             echo "outcome=failure" >> $GITHUB_OUTPUT
           else
             echo "outcome=success" >> $GITHUB_OUTPUT
@@ -169,7 +231,7 @@ jobs:
         run: |
           report_body=$(cat ./${{ matrix.mkdocs_repo_name }}/lychee-report.md)
           report_cleaned=$(echo "$report_body" | sed 's/^\s*//;s/\s*$//')
-          
+
           {
             echo "body<<EOF"
             echo "### 🚨 Broken Links Detected in ${{ matrix.label }} Docs"
