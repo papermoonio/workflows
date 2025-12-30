@@ -1,4 +1,4 @@
-name: Check Credits
+name: Tanssi - Appchain Funding Monitor
 
 on:
   workflow_dispatch:
