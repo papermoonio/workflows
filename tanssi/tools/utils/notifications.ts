@@ -1,5 +1,4 @@
-import axios from 'axios';
-import { readFileSync } from 'fs';
+import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 
 export interface TeamConfig {
@@ -13,87 +12,75 @@ export interface SecretsConfig {
   teams: TeamConfig[];
 }
 
-/**
- * Load secrets from GitHub environment variable or local file
- * Includes trimming to prevent issues with hidden whitespace in CI/CD secrets
- */
 export function loadSecrets(): SecretsConfig | null {
   try {
-    // Try to read from environment variable (GitHub secret)
     const envSecret = process.env.TANSSI_APPCHAIN_FUNDING_MONITOR;
     
     if (envSecret) {
-      process.stdout.write('Loading secrets from environment variable\n');
-      // Trim the raw string to remove potential trailing newlines from GitHub UI
+      console.log('Loading secrets from environment variable');
+      // .trim() is crucial for GitHub Secrets
       const config = JSON.parse(envSecret.trim()) as SecretsConfig;
-      
-      // Sanitize the bot token inside the object
-      if (config.telegramBotToken) {
-        config.telegramBotToken = config.telegramBotToken.trim();
-      }
-      
+      if (config.telegramBotToken) config.telegramBotToken = config.telegramBotToken.trim();
       return config;
     }
     
-    // Fallback to local .secrets.json file
     const secretsPath = join(process.cwd(), '.secrets.json');
-    process.stdout.write('Loading secrets from local file\n');
+    if (!existsSync(secretsPath)) {
+      console.error('Secrets source not found (Env or .secrets.json)');
+      return null;
+    }
+
+    console.log('Loading secrets from local file');
     const fileContent = readFileSync(secretsPath, 'utf-8');
     return JSON.parse(fileContent) as SecretsConfig;
-  } catch (error: any) {
-    process.stderr.write(`Failed to load secrets: ${error.message}\n`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`Failed to load secrets: ${message}`);
     return null;
   }
 }
 
-/**
- * Send a message via Telegram Bot API using Axios
- * Replaces native fetch to improve reliability in GitHub Action environments
- */
 export async function sendTelegramMessage(
   botToken: string,
   chatId: string,
   message: string
 ): Promise<boolean> {
   try {
-    // Ensure the token is clean and format the URL
+    // Sanitize token to prevent malformed URL errors
     const cleanToken = botToken.trim();
     const url = `https://api.telegram.org/bot${cleanToken}/sendMessage`;
     
-    const response = await axios.post(url, {
-      chat_id: chatId,
-      text: message,
-      parse_mode: 'Markdown',
-    }, {
-      timeout: 15000 // 15 second timeout for slow CI networks
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: chatId,
+        text: message,
+        parse_mode: 'Markdown',
+      }),
+      // Native fetch doesn't have a default timeout; good to add one for CI/CD
+      signal: AbortSignal.timeout(15000) 
     });
 
-    if (response.status === 200) {
-      return true;
+    if (!response.ok) {
+      // Safely attempt to get error details
+      const errorText = await response.text();
+      console.error(`Telegram API error (${response.status}): ${errorText}`);
+      return false;
     }
-    
-    return false;
-  } catch (error: any) {
-    if (axios.isAxiosError(error)) {
-      // Detailed logging to identify if the issue is a 401 (token), 400 (chat_id), or 403 (blocked)
-      const status = error.response?.status;
-      const data = JSON.stringify(error.response?.data);
-      process.stderr.write(`Telegram API Error [${status}]: ${data}\n`);
-    } else {
-      // Network level error (DNS, Connection Refused, etc.)
-      process.stderr.write(`Telegram Network/Request Error: ${error.message}\n`);
-    }
+
+    return true;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`Failed to send Telegram message: ${message}`);
     return false;
   }
 }
 
-/**
- * Find team configuration by para ID
- */
 export function findTeamByParaId(
   secrets: SecretsConfig,
-  paraId: number
+  paraId: number | string
 ): TeamConfig | undefined {
-  // Ensure we compare numbers to numbers
+  // Use Number() to ensure comparison works even if paraId is passed as a string from CLI
   return secrets.teams.find(team => Number(team.para_id) === Number(paraId));
 }
