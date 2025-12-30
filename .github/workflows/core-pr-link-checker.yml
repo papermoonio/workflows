@@ -28,7 +28,6 @@ jobs:
   check-links:
     runs-on: ubuntu-latest
     steps:
-      # Step 1: Derive repository names from inputs for use in later steps
       - name: 'Set up workflow variables'
         id: vars
         run: |
@@ -36,7 +35,6 @@ jobs:
           echo "docs_repo_name=$(basename ${{ inputs.docs_repo }})" >> $GITHUB_OUTPUT
           echo "docs_checkout_path=$(basename ${{ inputs.docs_checkout }})" >> $GITHUB_OUTPUT
 
-      # Step 2: Checkout the MkDocs and Docs repositories
       - name: 'Checkout MkDocs Repo'
         uses: actions/checkout@v4
         with:
@@ -50,7 +48,6 @@ jobs:
           path: ${{ steps.vars.outputs.mkdocs_repo_name }}/${{ steps.vars.outputs.docs_checkout_path }}
           ref: ${{ github.event.pull_request.head.ref }}
 
-      # Step 3: Set up Python and install dependencies
       - name: 'Set up Python'
         uses: actions/setup-python@v5
         with:
@@ -62,125 +59,91 @@ jobs:
         working-directory: ${{ steps.vars.outputs.mkdocs_repo_name }}
         run: |
           pip install --upgrade pip
-          pip install -r requirements.txt
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          pip install mkdocs-material mkdocs
 
-      # Step 4: Build the MkDocs site
       - name: 'Build MkDocs site'
         working-directory: ${{ steps.vars.outputs.mkdocs_repo_name }}
         run: mkdocs build -d site${{ inputs.root_dir }}
 
-      # Step 5: Detect documentation file changes (added, modified, renamed)
-      - name: 'Detect documentation file changes'
-        id: changed_files
-        uses: tj-actions/changed-files@v44
-        with:
-          # Limit the repo being inspected to the docs repo checkout
-          path: ${{ steps.vars.outputs.mkdocs_repo_name }}/${{ steps.vars.outputs.docs_checkout_path }}
-          files: |
-            **/*.md
-            **/*.ipynb
-            **/*.webp
-            **/*.png
-
-      # Step 6: Handle link checking for changed files
-      - name: 'Handle link checking for changed files'
-        id: link_checking
-        env:
-          ADDED_FILES: ${{ steps.changed_files.outputs.added_files }}
-          RENAMED_FILES: ${{ steps.changed_files.outputs.renamed_files }}
-          MKDOCS_REPO_NAME: ${{ steps.vars.outputs.mkdocs_repo_name }}
-          BASE_URL: ${{ inputs.url }}
-        run: |
-          # Validate required environment variables
-          if [[ -z "$BASE_URL" ]]; then
-            echo "❌ Error: BASE_URL is not set"
-            exit 1
-          fi
-
-          convert_to_url_path() {
-            local file="$1"
-            if [[ "$file" =~ ^\. ]]; then
-              echo ""
-              return
-            fi
-            local url_path
-            url_path=$(echo "$file" | sed -e "s/index\.\(md\|ipynb\|webp\|png\)$//" \
-                                          -e "s/\.\(md\|ipynb\|webp\|png\)$//" \
-                                          -e 's/\/$//')
-            echo "$url_path"
-          }
-
-          process_file() {
-            local file="$1"
-            URL_PATH=$(convert_to_url_path "$file")
-            if [[ -z "$URL_PATH" ]]; then
-              echo "  ⏭️  $file → (private file, skipping)"
-              return
-            fi
-            EXCLUDED_URL="${BASE_URL}/${URL_PATH}/"
-            echo "  🚫 $file → $EXCLUDED_URL"
-            EXCLUDE_ARGS="$EXCLUDE_ARGS --exclude $EXCLUDED_URL"
-          }
-
-          EXCLUDE_ARGS=""
-
-          if [[ -n "$ADDED_FILES" ]]; then
-            echo "🔗 Excluding URLs for new pages found in this PR:"
-            for file in $ADDED_FILES; do [[ -n "$file" ]] && process_file "$file"; done
-          fi
-
-          if [[ -n "$RENAMED_FILES" ]]; then
-            echo "🔗 Excluding URLs for renamed pages found in this PR:"
-            for file in $RENAMED_FILES; do
-              [[ -n "$file" ]] || continue
-              NEW_PATH=$(echo "$file" | sed 's/^.* -> //')
-              if [[ -n "$NEW_PATH" ]]; then
-                process_file "$NEW_PATH"
-              else
-                echo "  ⚠️  Warning: Could not parse renamed file entry: $file"
-              fi
-            done
-          fi
-
-          if [[ -z "$ADDED_FILES" && -z "$RENAMED_FILES" ]]; then
-            echo "✅ No documentation files were changed in this PR."
-          else
-            ADDED_COUNT=$(echo "$ADDED_FILES" | tr -s ' ' '\n' | grep -c . || echo "0")
-            RENAMED_COUNT=$(echo "$RENAMED_FILES" | tr -s ' ' '\n' | grep -c . || echo "0")
-            echo "📊 Summary: Processed $ADDED_COUNT added and $RENAMED_COUNT renamed files"
-          fi
-
-          echo "exclude_args=$EXCLUDE_ARGS" >> $GITHUB_OUTPUT
-
-      # Step 7: Prepare lychee arguments  (← align the dash with other steps)
       - name: 'Prepare lychee arguments'
         id: lychee_args
-        env:
-          MKDOCS_REPO_NAME: ${{ steps.vars.outputs.mkdocs_repo_name }}
-          EXCLUDE_ARGS: ${{ steps.link_checking.outputs.exclude_args }}
-          ROOT_DIR: ${{ inputs.root_dir }}
+        shell: bash
         run: |
-          ROOT="${{ github.workspace }}/${MKDOCS_REPO_NAME}/site${ROOT_DIR}"
-          ARGS="--root-dir $ROOT --no-progress --accept 429,403"
+          # 1. Define paths
+          MKDOCS_REPO="${{ steps.vars.outputs.mkdocs_repo_name }}"
+          ABS_SITE_PATH="${{ github.workspace }}/${MKDOCS_REPO}/site${{ inputs.root_dir }}"
+          
+          # 2. Base arguments
+          ARGS="--root-dir $ABS_SITE_PATH --verbose --no-progress --accept 429,403"
+          
+          # 3. Add Remap Logic (Production URL -> Local file:// URI)
+          # This replaces the old Step 6 (detecting changed files for exclusions)
+          if [[ -n "${{ inputs.url }}" ]]; then
+            BASE_URL="${{ inputs.url }}"
+            [[ "$BASE_URL" != */ ]] && BASE_URL="$BASE_URL/"
+            
+            # Use file:// prefix to ensure Lychee treats it as a local URI
+            FILE_URI="file://$ABS_SITE_PATH/"
+            ARGS="$ARGS --remap '$BASE_URL $FILE_URI'"
+          fi
 
-          URLIGNORE_PATH="${{ github.workspace }}/${MKDOCS_REPO_NAME}/.urlignore"
+          # 4. Handle ignores
+          URLIGNORE_PATH="${{ github.workspace }}/${MKDOCS_REPO}/.urlignore"
           if [[ -f "$URLIGNORE_PATH" ]]; then
-            echo "Found .urlignore file. Adding to lychee arguments."
-            ARGS="$ARGS --exclude-file $URLIGNORE_PATH"
+            ARGS="$ARGS --exclude-file '$URLIGNORE_PATH'"
           fi
 
-          if [[ -n "${EXCLUDE_ARGS:-}" ]]; then
-            echo "Adding exclude arguments for changed files: $EXCLUDE_ARGS"
-            ARGS="$ARGS $EXCLUDE_ARGS"
-          fi
-
-          # Let lychee scan the generated HTML (no quotes so the glob expands)
-          ARGS="$ARGS $ROOT/**/*.html"
+          # 5. Define scan targets (HTML files)
+          ARGS="$ARGS $ABS_SITE_PATH/**/*.html"
+          
           echo "args=$ARGS" >> $GITHUB_OUTPUT
 
-      # Step 8: Run the link checker
-      - name: 'Run Link Checker (lychee)'
+      # ATTEMPT 1
+      - name: 'Run Link Checker (Attempt 1)'
+        id: lychee1
         uses: lycheeverse/lychee-action@v2.4.1
         with:
           args: ${{ steps.lychee_args.outputs.args }}
           fail: true
+        continue-on-error: true
+
+      - name: 'Backoff 1'
+        if: steps.lychee1.outcome == 'failure'
+        run: sleep 60
+
+      # ATTEMPT 2
+      - name: 'Run Link Checker (Attempt 2)'
+        if: steps.lychee1.outcome == 'failure'
+        id: lychee2
+        uses: lycheeverse/lychee-action@v2.4.1
+        with:
+          args: ${{ steps.lychee_args.outputs.args }}
+          fail: true
+        continue-on-error: true
+
+      - name: 'Backoff 2'
+        if: steps.lychee1.outcome == 'failure' && steps.lychee2.outcome == 'failure'
+        run: sleep 120
+
+      # ATTEMPT 3
+      - name: 'Run Link Checker (Attempt 3)'
+        if: steps.lychee1.outcome == 'failure' && steps.lychee2.outcome == 'failure'
+        id: lychee3
+        uses: lycheeverse/lychee-action@v2.4.1
+        with:
+          args: ${{ steps.lychee_args.outputs.args }}
+          fail: true
+        continue-on-error: true
+
+      - name: 'Determine Final Status'
+        if: always()
+        shell: bash
+        run: |
+          if [[ "${{ steps.lychee1.outcome }}" == "success" || "${{ steps.lychee2.outcome }}" == "success" || "${{ steps.lychee3.outcome }}" == "success" ]]; then
+            echo "✅ Link check passed."
+            exit 0
+          else
+            echo "❌ Link check failed after 3 attempts."
+            exit 1
+          fi
