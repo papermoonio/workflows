@@ -1,5 +1,9 @@
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
+import dns from 'node:dns';
+
+// Prefer IPv4 results first to reduce sporadic IPv6 connectivity issues on CI runners.
+dns.setDefaultResultOrder('ipv4first');
 
 export interface TeamConfig {
   name: string;
@@ -45,33 +49,91 @@ export async function sendTelegramMessage(
   chatId: string,
   message: string
 ): Promise<boolean> {
+  const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
   try {
     // Sanitize token to prevent malformed URL errors
     const cleanToken = botToken.trim();
     const url = `https://api.telegram.org/bot${cleanToken}/sendMessage`;
-    
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: chatId,
-        text: message,
-        parse_mode: 'Markdown',
-      }),
-      // Native fetch doesn't have a default timeout; good to add one for CI/CD
-      signal: AbortSignal.timeout(15000) 
-    });
+    const { host } = new URL(url);
 
-    if (!response.ok) {
-      // Safely attempt to get error details
-      const errorText = await response.text();
-      console.error(`Telegram API error (${response.status}): ${errorText}`);
-      return false;
+    const attempts = Number(process.env.TELEGRAM_FETCH_ATTEMPTS ?? 5);
+    const timeoutMs = Number(process.env.TELEGRAM_FETCH_TIMEOUT_MS ?? 25000);
+    const debug = process.env.TELEGRAM_FETCH_DEBUG === '1';
+
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      try {
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: chatId,
+            text: message,
+            parse_mode: 'Markdown',
+          }),
+          // Native fetch doesn't have a default timeout; good to add one for CI/CD
+          signal: AbortSignal.timeout(timeoutMs),
+        });
+
+        if (!response.ok) {
+          // Safely attempt to get error details
+          const errorText = await response.text();
+          console.error(`Telegram API error (${response.status}): ${errorText}`);
+          return false;
+        }
+
+        return true;
+      } catch (error) {
+        const err = error as unknown as { message?: string; name?: string; cause?: unknown };
+        const message = err?.message ?? String(error);
+        const cause = err?.cause as
+          | undefined
+          | {
+              name?: string;
+              message?: string;
+              code?: string;
+              errno?: string | number;
+              syscall?: string;
+              address?: string;
+              port?: number;
+            };
+
+        const isFinalAttempt = attempt >= attempts;
+        if (debug || isFinalAttempt) {
+          const log = isFinalAttempt ? console.error : console.warn;
+          log(
+            `Failed to send Telegram message (attempt ${attempt}/${attempts}) to host=${host}, timeoutMs=${timeoutMs}: ${message}`
+          );
+          if (cause) {
+            log('Telegram fetch error cause:', {
+              name: cause.name,
+              message: cause.message,
+              code: cause.code,
+              errno: cause.errno,
+              syscall: cause.syscall,
+              address: cause.address,
+              port: cause.port,
+            });
+          }
+        }
+
+        if (attempt < attempts) {
+          const baseDelayMs = 400;
+          const maxDelayMs = 4000;
+          const backoffMs = Math.min(maxDelayMs, baseDelayMs * 2 ** (attempt - 1));
+          const jitterMs = Math.floor(Math.random() * 200);
+          await sleep(backoffMs + jitterMs);
+          continue;
+        }
+
+        return false;
+      }
     }
 
-    return true;
+    return false;
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const err = error as unknown as { message?: string; name?: string; cause?: unknown };
+    const message = err?.message ?? String(error);
     console.error(`Failed to send Telegram message: ${message}`);
     return false;
   }
