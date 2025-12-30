@@ -41,7 +41,7 @@ jobs:
       
       - name: Check credits
         env:
-          BOT_ID_TEAMS_IDS: ${{ secrets.BOT_ID_TEAMS_IDS }}
+          TANSSI_APPCHAIN_FUNDING_MONITOR: ${{ secrets.TANSSI_APPCHAIN_FUNDING_MONITOR }}
         working-directory: tanssi
         run: |
           if [ -n "${{ inputs.threshold }}" ]; then

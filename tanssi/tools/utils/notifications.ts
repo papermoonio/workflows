@@ -18,7 +18,7 @@ export interface SecretsConfig {
 export function loadSecrets(): SecretsConfig | null {
   try {
     // Try to read from environment variable (GitHub secret)
-    const envSecret = process.env.BOT_ID_TEAMS_IDS;
+    const envSecret = process.env.TANSSI_APPCHAIN_FUNDING_MONITOR;
     
     if (envSecret) {
       process.stdout.write('Loading secrets from environment variable\n');
