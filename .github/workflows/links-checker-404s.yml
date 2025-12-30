@@ -1,8 +1,10 @@
 name: 'General - Link Check for Documentation Sites'
 
 on:
+  # Runs every weekday at 12:00 UTC.
   schedule:
     - cron: '0 12 * * 1-5'
+  # Allows you to run this workflow manually from the Actions tab.
   workflow_dispatch:
     inputs:
       selected_project:
@@ -92,10 +94,12 @@ jobs:
           selected="${{ github.event.inputs.selected_project || 'All' }}"
           mkdocs_ref="${{ github.event.inputs.mkdocs_branch || '' }}"
           docs_ref="${{ github.event.inputs.docs_branch || '' }}"
+
           if [[ "${{ github.event_name }}" != "workflow_dispatch" || "$selected" == "All" ]]; then
             mkdocs_ref=""
             docs_ref=""
           fi
+
           echo "mkdocs_ref=$mkdocs_ref" >> "$GITHUB_OUTPUT"
           echo "docs_ref=$docs_ref" >> "$GITHUB_OUTPUT"
 
@@ -125,54 +129,43 @@ jobs:
         run: |
           pip install --upgrade pip
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-          pip install mkdocs
 
       - name: 'Build MkDocs site'
         working-directory: ${{ matrix.mkdocs_repo_name }}
         run: mkdocs build -d site${{ matrix.root_dir }}
 
-      - name: Read MkDocs config
+      - name: Read MkDocs config (site_url)
         id: mkdocs_cfg
         working-directory: ${{ matrix.mkdocs_repo_name }}
-        env:
-          DOCS_REPO_NAME: ${{ matrix.docs_repo_name }}
         shell: bash
         run: |
           python - <<'PY' >> "$GITHUB_OUTPUT"
-          import os, re
           from mkdocs import config as mkdocs_config
           try:
               cfg = mkdocs_config.load_config("mkdocs.yml")
               site_url = (cfg.get("site_url") or "").rstrip("/")
-              docs_dir = (cfg.get("docs_dir") or "docs").strip()
-              docs_dir = re.sub(r"^\.\/", "", docs_dir).strip("/")
-              docs_repo_name = (os.environ.get("DOCS_REPO_NAME") or "").strip().strip("/")
-              docs_subdir = ""
-              if docs_repo_name:
-                  if docs_dir == docs_repo_name:
-                      docs_subdir = ""
-                  elif docs_dir.startswith(docs_repo_name + "/"):
-                      docs_subdir = docs_dir[len(docs_repo_name) + 1 :].strip("/")
               print(f"site_url={site_url}")
-              print(f"docs_subdir={docs_subdir}")
-          except Exception as e:
+          except Exception:
               print(f"site_url=")
-              print(f"docs_subdir=")
           PY
-
-      # ... (Keeping your Detect changed files and Build exclude args logic as-is) ...
 
       - name: Prepare Lychee Arguments
         id: lychee_args
         shell: bash
         run: |
+          # The --remap flag solves the "new page" problem by mapping the site_url to the local folder
           ARGS="--root-dir $(pwd)/${{ matrix.mkdocs_repo_name }}/site --verbose --no-progress --accept 429,403"
+          
+          if [[ -n "${{ steps.mkdocs_cfg.outputs.site_url }}" ]]; then
+            ARGS="$ARGS --remap '${{ steps.mkdocs_cfg.outputs.site_url }} $(pwd)/${{ matrix.mkdocs_repo_name }}/site'"
+          fi
+
           if [[ -f "$(pwd)/${{ matrix.mkdocs_repo_name }}/.urlignore" ]]; then
             ARGS="$ARGS --exclude-file $(pwd)/${{ matrix.mkdocs_repo_name }}/.urlignore"
           fi
+
           echo "args=$ARGS" >> $GITHUB_OUTPUT
 
-      # ATTEMPT 1
       - name: Run Link Checker (Attempt 1)
         id: lychee1
         uses: lycheeverse/lychee-action@v2.4.1
@@ -184,7 +177,10 @@ jobs:
           fail: true
         continue-on-error: true
 
-      # ATTEMPT 2
+      - name: Backoff 1
+        if: steps.lychee1.outcome == 'failure'
+        run: sleep 60
+
       - name: Run Link Checker (Attempt 2)
         if: steps.lychee1.outcome == 'failure'
         id: lychee2
@@ -197,11 +193,10 @@ jobs:
           fail: true
         continue-on-error: true
 
-      - name: Backoff before Attempt 3
+      - name: Backoff 2
         if: steps.lychee1.outcome == 'failure' && steps.lychee2.outcome == 'failure'
-        run: sleep 60
+        run: sleep 120
 
-      # ATTEMPT 3
       - name: Run Link Checker (Attempt 3)
         if: steps.lychee1.outcome == 'failure' && steps.lychee2.outcome == 'failure'
         id: lychee3
@@ -224,7 +219,7 @@ jobs:
             echo "final_outcome=failure" >> $GITHUB_OUTPUT
           fi
 
-      - name: 'Prepare Report'
+      - name: 'Read Link Checker Report'
         if: steps.lychee_status.outputs.final_outcome == 'failure'
         id: report
         shell: bash
@@ -233,7 +228,7 @@ jobs:
           {
             echo "body<<EOF"
             echo "### 🚨 Broken Links Detected in ${{ matrix.label }} Docs"
-            echo "Found after 3 attempts. [View Run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+            echo "This was found after 3 attempts. [Link to Run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})"
             echo ""
             echo "$report_body"
             echo "EOF"
@@ -249,6 +244,8 @@ jobs:
             --title "Broken Links Detected on $(date +'%Y-%m-%d')" \
             --body "${{ steps.report.outputs.body }}"
 
-      - name: Fail Job if links were broken
+      - name: Final Job Failure
         if: steps.lychee_status.outputs.final_outcome == 'failure'
-        run: exit 1
+        run: |
+          echo "Link checker failed after 3 attempts."
+          exit 1
