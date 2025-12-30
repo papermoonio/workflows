@@ -1,7 +1,7 @@
 name: 'General - Link Check for Documentation Sites'
 
 on:
-  # Runs every day at midnight UTC (00:00).
+  # Runs every weekday at 12:00 UTC.
   schedule:
     - cron: '0 12 * * 1-5'
   # Allows you to run this workflow manually from the Actions tab.
@@ -46,7 +46,6 @@ jobs:
         run: |
           selected="${{ github.event.inputs.selected_project || 'All' }}"
 
-          # The 'token' key has been removed from this JSON object
           all_projects=$(jq -n '
             [
               { "mkdocs_repo": "papermoonio/kluster-mkdocs", "docs_repo": "kluster-ai/docs", "mkdocs_repo_name": "kluster-mkdocs", "docs_repo_name": "kluster-docs", "root_dir": "", "label": "kluster.ai" },
@@ -76,8 +75,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # This fromJson will now work because the input is not redacted
         include: ${{ fromJson(needs.generate-matrix.outputs.matrix) }}
+
     steps:
       # Select the correct token based on the matrix label
       - name: Select Token
@@ -106,7 +105,7 @@ jobs:
           echo "mkdocs_ref=$mkdocs_ref" >> "$GITHUB_OUTPUT"
           echo "docs_ref=$docs_ref" >> "$GITHUB_OUTPUT"
 
-      # Check out the MkDocs project repository into a specific directory.
+      # Checkout MkDocs repo (default vs ref)
       - name: 'Checkout MkDocs Repo for ${{ matrix.mkdocs_repo_name }} (default branch)'
         if: steps.refs.outputs.mkdocs_ref == ''
         uses: actions/checkout@v4
@@ -122,12 +121,13 @@ jobs:
           ref: ${{ steps.refs.outputs.mkdocs_ref }}
           path: ${{ matrix.mkdocs_repo_name }}
 
-      # Check out the corresponding documentation content repo into a subdirectory.
+      # Checkout Docs content repo (default vs ref) with full history (needed for diffs)
       - name: 'Checkout Docs Content Repo for ${{ matrix.docs_repo_name }} (default branch)'
         if: steps.refs.outputs.docs_ref == ''
         uses: actions/checkout@v4
         with:
           repository: ${{ matrix.docs_repo }}
+          fetch-depth: 0
           path: '${{ matrix.mkdocs_repo_name}}/${{ matrix.docs_repo_name}}'
 
       - name: 'Checkout Docs Content Repo for ${{ matrix.docs_repo_name }} (ref: ${{ steps.refs.outputs.docs_ref }})'
@@ -136,36 +136,212 @@ jobs:
         with:
           repository: ${{ matrix.docs_repo }}
           ref: ${{ steps.refs.outputs.docs_ref }}
+          fetch-depth: 0
           path: '${{ matrix.mkdocs_repo_name}}/${{ matrix.docs_repo_name}}'
 
-      # Set up Python environment.
       - name: 'Set up Python'
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
           cache: 'pip'
 
-      # Install Python dependencies from requirements.txt.
       - name: 'Install dependencies'
         working-directory: ${{ matrix.mkdocs_repo_name }}
         run: |
           pip install --upgrade pip
           pip install -r requirements.txt
 
-      # Install MkDocs and the link checker plugin.
       - name: 'Build MkDocs site'
         working-directory: ${{ matrix.mkdocs_repo_name }}
         run: mkdocs build -d site${{ matrix.root_dir }}
 
-      # Prepare arguments for the link checker.
+      # Read site_url + docs_dir to correctly map "repo file path" -> "URL path"
+      - name: Read MkDocs config (site_url + docs_dir mapping)
+        id: mkdocs_cfg
+        working-directory: ${{ matrix.mkdocs_repo_name }}
+        env:
+          DOCS_REPO_NAME: ${{ matrix.docs_repo_name }}
+        shell: bash
+        run: |
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import os, re
+          try:
+            import yaml
+          except Exception as e:
+            raise SystemExit("PyYAML not available; MkDocs should install it. Error: %s" % e)
+
+          cfg = yaml.safe_load(open("mkdocs.yml", "r", encoding="utf-8")) or {}
+
+          site_url = (cfg.get("site_url") or "").rstrip("/")
+
+          docs_dir = (cfg.get("docs_dir") or "docs").strip()
+          docs_dir = re.sub(r"^\.\/", "", docs_dir)
+
+          docs_repo_name = (os.environ.get("DOCS_REPO_NAME") or "").strip().strip("/")
+
+          # mkdocs.yml often uses docs_dir like "<docs_repo_name>/docs" or "<docs_repo_name>"
+          docs_subdir = ""
+          if docs_repo_name:
+            prefix = docs_repo_name + "/"
+            if docs_dir == docs_repo_name:
+              docs_subdir = ""  # content repo root
+            elif docs_dir.startswith(prefix):
+              docs_subdir = docs_dir[len(prefix):].strip("/")
+            else:
+              # docs_dir isn't rooted in the content repo folder; don't attempt stripping
+              docs_subdir = ""
+
+          print(f"site_url={site_url}")
+          print(f"docs_subdir={docs_subdir}")
+          PY
+
+      # Detect added/renamed pages vs the content repo default branch (manual single-project runs only)
+      - name: Detect added/renamed docs files (for internal URL excludes)
+        id: changed_files
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.selected_project != 'All'
+        working-directory: ${{ matrix.mkdocs_repo_name}}/${{ matrix.docs_repo_name}}
+        env:
+          GH_TOKEN: ${{ steps.select_token.outputs.token }}
+        shell: bash
+        run: |
+          default_branch="$(gh api "repos/${{ matrix.docs_repo }}" -q '.default_branch')"
+          echo "Default branch for ${{ matrix.docs_repo }} is: $default_branch"
+
+          # Ensure base ref exists locally
+          git fetch --no-tags --prune origin "$default_branch":"refs/remotes/origin/$default_branch"
+
+          # Name-status between default branch and current checkout (HEAD may be detached)
+          diff_file="$(mktemp)"
+          git diff --name-status "origin/$default_branch"...HEAD > "$diff_file" || true
+
+          # Added: "A<TAB>path"
+          added_files="$(awk '$1=="A"{print $2}' "$diff_file" | tr '\n' ' ' | sed 's/[[:space:]]\+$//')"
+
+          # Renamed: "R100<TAB>old<TAB>new"
+          renamed_files="$(awk '$1 ~ /^R/ {print $2" -> "$3}' "$diff_file" | tr '\n' ' ' | sed 's/[[:space:]]\+$//')"
+
+          echo "added_files=$added_files" >> "$GITHUB_OUTPUT"
+          echo "renamed_files=$renamed_files" >> "$GITHUB_OUTPUT"
+
+      # Build lychee --exclude args for any new/renamed pages so canonical/internal absolute URLs
+      # don't false-fail before the site is deployed.
+      - name: Build exclude args for new/renamed pages (avoid canonical false positives)
+        id: internal_excludes
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.selected_project != 'All'
+        env:
+          ADDED_FILES: ${{ steps.changed_files.outputs.added_files }}
+          RENAMED_FILES: ${{ steps.changed_files.outputs.renamed_files }}
+          BASE_URL: ${{ steps.mkdocs_cfg.outputs.site_url }}
+          DOCS_SUBDIR: ${{ steps.mkdocs_cfg.outputs.docs_subdir }}
+        shell: bash
+        run: |
+          # If site_url isn't set, we can't reliably construct canonical URLs to exclude.
+          if [[ -z "$BASE_URL" ]]; then
+            echo "⚠️  mkdocs.yml has no site_url; skipping internal URL exclusions."
+            echo "exclude_args=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          normalize_path() {
+            local p="$1"
+            # strip leading ./ and leading /
+            p="${p#./}"
+            p="${p#/}"
+            echo "$p"
+          }
+
+          convert_to_url_path() {
+            local file
+            file="$(normalize_path "$1")"
+
+            # Skip private/hidden files
+            if [[ "$file" =~ ^\. ]]; then
+              echo ""
+              return
+            fi
+
+            # If docs are under a subdir inside the content repo (e.g. "docs/"), strip it
+            if [[ -n "$DOCS_SUBDIR" ]]; then
+              local prefix
+              prefix="$(normalize_path "$DOCS_SUBDIR")/"
+              if [[ "$file" == "$prefix"* ]]; then
+                file="${file#"$prefix"}"
+              fi
+            fi
+
+            # Only consider doc-ish files that map to URLs
+            if [[ ! "$file" =~ \.(md|ipynb|webp|png|jpg|jpeg|gif|svg)$ ]]; then
+              echo ""
+              return
+            fi
+
+            # Convert to MkDocs directory-style URL paths
+            local url_path
+            url_path="$(echo "$file" | sed -e "s/index\.\(md\|ipynb\|webp\|png\|jpg\|jpeg\|gif\|svg\)$//" \
+                                            -e "s/\.\(md\|ipynb\|webp\|png\|jpg\|jpeg\|gif\|svg\)$//" \
+                                            -e 's/\/$//')"
+
+            # If url_path empty (e.g. root index), skip
+            if [[ -z "$url_path" ]]; then
+              echo ""
+              return
+            fi
+
+            echo "$url_path"
+          }
+
+          process_file() {
+            local file="$1"
+            local URL_PATH
+            URL_PATH="$(convert_to_url_path "$file")"
+            if [[ -z "$URL_PATH" ]]; then
+              return
+            fi
+
+            # MkDocs canonical URLs typically end with trailing slash
+            local EXCLUDED_URL="${BASE_URL}/${URL_PATH}/"
+            echo "  🚫 $file → $EXCLUDED_URL"
+            EXCLUDE_ARGS="$EXCLUDE_ARGS --exclude $EXCLUDED_URL"
+          }
+
+          EXCLUDE_ARGS=""
+
+          if [[ -n "$ADDED_FILES" ]]; then
+            echo "🔗 Excluding URLs for added files:"
+            for file in $ADDED_FILES; do
+              [[ -n "$file" ]] && process_file "$file"
+            done
+          fi
+
+          if [[ -n "$RENAMED_FILES" ]]; then
+            echo "🔗 Excluding URLs for renamed files (new paths):"
+            for entry in $RENAMED_FILES; do
+              [[ -n "$entry" ]] || continue
+              # entry format: "old -> new"
+              NEW_PATH="$(echo "$entry" | sed 's/^.* -> //')"
+              [[ -n "$NEW_PATH" ]] && process_file "$NEW_PATH"
+            done
+          fi
+
+          echo "exclude_args=$EXCLUDE_ARGS" >> "$GITHUB_OUTPUT"
+
       - name: Prepare Lychee Arguments
         id: lychee_args
+        shell: bash
         run: |
           ARGS="--root-dir $(pwd)/${{ matrix.mkdocs_repo_name }}/site --verbose --no-progress --accept 429,403"
+
           if [[ -f "$(pwd)/${{ matrix.mkdocs_repo_name }}/.urlignore" ]]; then
             echo "Found .urlignore file. Adding to lychee arguments."
             ARGS="$ARGS --exclude-file $(pwd)/${{ matrix.mkdocs_repo_name }}/.urlignore"
           fi
+
+          # Add exclusions for new/renamed pages (manual single-project runs)
+          if [[ -n "${{ steps.internal_excludes.outputs.exclude_args }}" ]]; then
+            echo "Adding internal excludes for new/renamed pages."
+            ARGS="$ARGS ${{ steps.internal_excludes.outputs.exclude_args }}"
+          fi
+
           echo "args=$ARGS" >> $GITHUB_OUTPUT
 
       # Attempt 1
@@ -180,7 +356,6 @@ jobs:
           fail: true
         continue-on-error: true
 
-      # Backoff
       - name: Backoff
         if: steps.lychee1.outcome == 'failure'
         run: sleep 60
@@ -188,24 +363,7 @@ jobs:
       # Attempt 2
       - name: Run Link Checker (Attempt 2)
         id: lychee2
-        uses: lycheeverse/lychee-action@v2.4.1
-        with:
-          args: >
-            ${{ steps.lychee_args.outputs.args }}
-            './${{ matrix.mkdocs_repo_name }}/site/**/*.html'
-          output: ./${{ matrix.mkdocs_repo_name }}/lychee-report.md
-          fail: true
-        continue-on-error: true
-
-      # Backoff
-      - name: Backoff
-        if: steps.lychee2.outcome == 'failure'
-        run: sleep 60
-
-      # Attempt 3 (only if 1 failed)
-      - name: Run Link Checker (Attempt 2)
-        id: lychee3
-        if: steps.lychee2.outcome == 'failure'
+        if: steps.lychee1.outcome == 'failure'
         uses: lycheeverse/lychee-action@v2.4.1
         with:
           args: >
@@ -217,17 +375,18 @@ jobs:
 
       - name: Set Final Outcome
         id: lychee
+        shell: bash
         run: |
-          if [[ "${{ steps.lychee3.outcome }}" == "failure" ]]; then
+          if [[ "${{ steps.lychee2.outcome }}" == "failure" ]]; then
             echo "outcome=failure" >> $GITHUB_OUTPUT
           else
             echo "outcome=success" >> $GITHUB_OUTPUT
           fi
 
-      # If the link checker fails, read the report and create a GitHub issue.
       - name: 'Read Link Checker Report'
         if: steps.lychee.outputs.outcome == 'failure'
         id: report
+        shell: bash
         run: |
           report_body=$(cat ./${{ matrix.mkdocs_repo_name }}/lychee-report.md)
           report_cleaned=$(echo "$report_body" | sed 's/^\s*//;s/\s*$//')
@@ -257,12 +416,12 @@ jobs:
             echo "EOF"
           } >> $GITHUB_OUTPUT
 
-      # Create a GitHub issue only if broken links are detected.
       - name: Create Issue on Failure
         if: steps.lychee.outputs.outcome == 'failure' && ((github.event_name == 'workflow_dispatch' && github.event.inputs.create_issue == 'true') || github.event_name == 'schedule')
         id: create_issue
         env:
           GH_TOKEN: ${{ steps.select_token.outputs.token }}
+        shell: bash
         run: |
           gh issue create \
             --repo "${{ matrix.docs_repo }}" \
