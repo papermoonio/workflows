@@ -36,7 +36,9 @@ jobs:
           cache-dependency-path: 'tanssi/package-lock.json'
       
       - name: Install dependencies
-        run: npm ci
+        run: |
+          npm ci
+          npm install axios
         working-directory: tanssi
       
       - name: Check credits
