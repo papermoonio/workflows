@@ -116,7 +116,7 @@ jobs:
         run: |
           pip install --upgrade pip
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-          pip install mkdocs-material mkdocs # Ensure common plugins are there
+          pip install mkdocs-material mkdocs
 
       - name: 'Build MkDocs site'
         working-directory: ${{ matrix.mkdocs_repo_name }}
@@ -141,22 +141,18 @@ jobs:
         id: lychee_args
         shell: bash
         run: |
-          SITE_ROOT="$(pwd)/${{ matrix.mkdocs_repo_name }}/site"
-          # Base args: allow 429/403, set root dir
-          ARGS="--root-dir $SITE_ROOT --verbose --no-progress --accept 429,403"
+          ABS_SITE_PATH="$(pwd)/${{ matrix.mkdocs_repo_name }}/site"
+          ARGS="--root-dir $ABS_SITE_PATH --verbose --no-progress --accept 429,403"
           
-          # Remapping logic:
-          # This tells Lychee: If you see the production URL, look in the local folder.
-          # We use the 'remap' feature without --offline so it can still hit Google.com
           if [[ -n "${{ steps.mkdocs_cfg.outputs.site_url }}" ]]; then
             BASE_URL="${{ steps.mkdocs_cfg.outputs.site_url }}"
-            # Map the production URL to the local filesystem path
-            # We use double quotes to handle paths with spaces if they ever occur
-            ARGS="$ARGS --remap \"$BASE_URL $SITE_ROOT\""
+            [[ "$BASE_URL" != */ ]] && BASE_URL="$BASE_URL/"
+            FILE_URI="file://$ABS_SITE_PATH/"
+            ARGS="$ARGS --remap '$BASE_URL $FILE_URI'"
           fi
 
           if [[ -f "$(pwd)/${{ matrix.mkdocs_repo_name }}/.urlignore" ]]; then
-            ARGS="$ARGS --exclude-file \"$(pwd)/${{ matrix.mkdocs_repo_name }}/.urlignore\""
+            ARGS="$ARGS --exclude-file '$(pwd)/${{ matrix.mkdocs_repo_name }}/.urlignore'"
           fi
 
           echo "args=$ARGS" >> $GITHUB_OUTPUT
@@ -221,6 +217,5 @@ jobs:
             --repo "${{ matrix.docs_repo }}" \
             --title "Broken Links Detected on $(date +'%Y-%m-%d')" \
             --body "### 🚨 Broken Links Report
-            Found in ${{ matrix.label }}. [View Run Log](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
             
             $report_body"
