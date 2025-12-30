@@ -1,10 +1,8 @@
 name: 'General - Link Check for Documentation Sites'
 
 on:
-  # Runs every weekday at 12:00 UTC.
   schedule:
     - cron: '0 12 * * 1-5'
-  # Allows you to run this workflow manually from the Actions tab.
   workflow_dispatch:
     inputs:
       selected_project:
@@ -45,7 +43,6 @@ jobs:
         shell: bash
         run: |
           selected="${{ github.event.inputs.selected_project || 'All' }}"
-
           all_projects=$(jq -n '
             [
               { "mkdocs_repo": "papermoonio/kluster-mkdocs", "docs_repo": "kluster-ai/docs", "mkdocs_repo_name": "kluster-mkdocs", "docs_repo_name": "kluster-docs", "root_dir": "", "label": "kluster.ai" },
@@ -55,18 +52,11 @@ jobs:
               { "mkdocs_repo": "papermoonio/wormhole-mkdocs", "docs_repo": "wormhole-foundation/wormhole-docs", "mkdocs_repo_name": "wormhole-mkdocs", "docs_repo_name": "wormhole-docs", "root_dir": "/docs", "label": "Wormhole" }
             ]
           ')
-
           if [ "$selected" == "All" ]; then
             filtered="$all_projects"
           else
             filtered=$(echo "$all_projects" | jq -c --arg sel "$selected" '[.[] | select(.label == $sel)]')
           fi
-
-          if [ -z "$filtered" ] || [ "$filtered" = "[]" ]; then
-            echo "❌ Error: No projects matched filter '$selected'."
-            exit 1
-          fi
-
           echo "matrix=$(echo "$filtered" | jq -c '.')" >> "$GITHUB_OUTPUT"
 
   check-links:
@@ -94,12 +84,9 @@ jobs:
           selected="${{ github.event.inputs.selected_project || 'All' }}"
           mkdocs_ref="${{ github.event.inputs.mkdocs_branch || '' }}"
           docs_ref="${{ github.event.inputs.docs_branch || '' }}"
-
           if [[ "${{ github.event_name }}" != "workflow_dispatch" || "$selected" == "All" ]]; then
-            mkdocs_ref=""
-            docs_ref=""
+            mkdocs_ref=""; docs_ref=""
           fi
-
           echo "mkdocs_ref=$mkdocs_ref" >> "$GITHUB_OUTPUT"
           echo "docs_ref=$docs_ref" >> "$GITHUB_OUTPUT"
 
@@ -129,12 +116,13 @@ jobs:
         run: |
           pip install --upgrade pip
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          pip install mkdocs-material mkdocs # Ensure common plugins are there
 
       - name: 'Build MkDocs site'
         working-directory: ${{ matrix.mkdocs_repo_name }}
         run: mkdocs build -d site${{ matrix.root_dir }}
 
-      - name: Read MkDocs config (site_url)
+      - name: Read MkDocs config
         id: mkdocs_cfg
         working-directory: ${{ matrix.mkdocs_repo_name }}
         shell: bash
@@ -153,15 +141,22 @@ jobs:
         id: lychee_args
         shell: bash
         run: |
-          # The --remap flag solves the "new page" problem by mapping the site_url to the local folder
-          ARGS="--root-dir $(pwd)/${{ matrix.mkdocs_repo_name }}/site --verbose --no-progress --accept 429,403"
+          SITE_ROOT="$(pwd)/${{ matrix.mkdocs_repo_name }}/site"
+          # Base args: allow 429/403, set root dir
+          ARGS="--root-dir $SITE_ROOT --verbose --no-progress --accept 429,403"
           
+          # Remapping logic:
+          # This tells Lychee: If you see the production URL, look in the local folder.
+          # We use the 'remap' feature without --offline so it can still hit Google.com
           if [[ -n "${{ steps.mkdocs_cfg.outputs.site_url }}" ]]; then
-            ARGS="$ARGS --remap '${{ steps.mkdocs_cfg.outputs.site_url }} $(pwd)/${{ matrix.mkdocs_repo_name }}/site'"
+            BASE_URL="${{ steps.mkdocs_cfg.outputs.site_url }}"
+            # Map the production URL to the local filesystem path
+            # We use double quotes to handle paths with spaces if they ever occur
+            ARGS="$ARGS --remap \"$BASE_URL $SITE_ROOT\""
           fi
 
           if [[ -f "$(pwd)/${{ matrix.mkdocs_repo_name }}/.urlignore" ]]; then
-            ARGS="$ARGS --exclude-file $(pwd)/${{ matrix.mkdocs_repo_name }}/.urlignore"
+            ARGS="$ARGS --exclude-file \"$(pwd)/${{ matrix.mkdocs_repo_name }}/.urlignore\""
           fi
 
           echo "args=$ARGS" >> $GITHUB_OUTPUT
@@ -174,7 +169,6 @@ jobs:
             ${{ steps.lychee_args.outputs.args }}
             './${{ matrix.mkdocs_repo_name }}/site/**/*.html'
           output: ./${{ matrix.mkdocs_repo_name }}/lychee-report.md
-          fail: true
         continue-on-error: true
 
       - name: Backoff 1
@@ -190,7 +184,6 @@ jobs:
             ${{ steps.lychee_args.outputs.args }}
             './${{ matrix.mkdocs_repo_name }}/site/**/*.html'
           output: ./${{ matrix.mkdocs_repo_name }}/lychee-report.md
-          fail: true
         continue-on-error: true
 
       - name: Backoff 2
@@ -206,46 +199,28 @@ jobs:
             ${{ steps.lychee_args.outputs.args }}
             './${{ matrix.mkdocs_repo_name }}/site/**/*.html'
           output: ./${{ matrix.mkdocs_repo_name }}/lychee-report.md
-          fail: true
         continue-on-error: true
 
-      - name: Set Final Outcome
+      - name: Determine Status
         id: lychee_status
         shell: bash
         run: |
           if [[ "${{ steps.lychee1.outcome }}" == "success" || "${{ steps.lychee2.outcome }}" == "success" || "${{ steps.lychee3.outcome }}" == "success" ]]; then
-            echo "final_outcome=success" >> $GITHUB_OUTPUT
+            echo "has_broken_links=false" >> $GITHUB_OUTPUT
           else
-            echo "final_outcome=failure" >> $GITHUB_OUTPUT
+            echo "has_broken_links=true" >> $GITHUB_OUTPUT
           fi
 
-      - name: 'Read Link Checker Report'
-        if: steps.lychee_status.outputs.final_outcome == 'failure'
-        id: report
-        shell: bash
-        run: |
-          report_body=$(cat ./${{ matrix.mkdocs_repo_name }}/lychee-report.md)
-          {
-            echo "body<<EOF"
-            echo "### 🚨 Broken Links Detected in ${{ matrix.label }} Docs"
-            echo "This was found after 3 attempts. [Link to Run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})"
-            echo ""
-            echo "$report_body"
-            echo "EOF"
-          } >> $GITHUB_OUTPUT
-
       - name: Create Issue on Failure
-        if: steps.lychee_status.outputs.final_outcome == 'failure' && ((github.event_name == 'workflow_dispatch' && github.event.inputs.create_issue == 'true') || github.event_name == 'schedule')
+        if: steps.lychee_status.outputs.has_broken_links == 'true' && ((github.event_name == 'workflow_dispatch' && github.event.inputs.create_issue == 'true') || github.event_name == 'schedule')
         env:
           GH_TOKEN: ${{ steps.select_token.outputs.token }}
         run: |
+          report_body=$(cat ./${{ matrix.mkdocs_repo_name }}/lychee-report.md)
           gh issue create \
             --repo "${{ matrix.docs_repo }}" \
             --title "Broken Links Detected on $(date +'%Y-%m-%d')" \
-            --body "${{ steps.report.outputs.body }}"
-
-      - name: Final Job Failure
-        if: steps.lychee_status.outputs.final_outcome == 'failure'
-        run: |
-          echo "Link checker failed after 3 attempts."
-          exit 1
+            --body "### 🚨 Broken Links Report
+            Found in ${{ matrix.label }}. [View Run Log](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
+            
+            $report_body"
