@@ -1,4 +1,4 @@
-name: Reusable — Validate LLMs file
+name: General — Validate LLMs file
 
 on:
   workflow_call:
