@@ -75,17 +75,20 @@ jobs:
           ABS_SITE_PATH="${{ github.workspace }}/${MKDOCS_REPO}/site${{ inputs.root_dir }}"
           
           # 2. Base arguments
-          # --include-index: Crucial for file:// - treats /quickstart/ as /quickstart/index.html
-          # --exclude '#': Ignores fragments/anchors (fixing __tabbed_ and header errors)
-          ARGS="--root-dir $ABS_SITE_PATH --verbose --no-progress --accept 429,403 --include-index --exclude '#'"
+          # --include-index: handles the /quickstart -> /quickstart/index.html mapping
+          # --exclude '.*#.*': Regex to ignore any URL with a fragment before Lychee tries to find the file
+          ARGS="--root-dir $ABS_SITE_PATH --verbose --no-progress --accept 429,403 --include-index --exclude '.*#.*'"
           
           # 3. Add Remap Logic (Production URL -> Local file:// URI)
           if [[ -n "${{ inputs.url }}" ]]; then
-            BASE_URL="${{ inputs.url }}"
-            [[ "$BASE_URL" != */ ]] && BASE_URL="$BASE_URL/"
+            # Strip trailing slash from URL to ensure clean mapping
+            BASE_URL=$(echo "${{ inputs.url }}" | sed 's/\/$//')
             
-            FILE_URI="file://$ABS_SITE_PATH/"
-            ARGS="$ARGS --remap '$BASE_URL $FILE_URI'"
+            # Map production URL to the local filesystem
+            FILE_URI="file://$ABS_SITE_PATH"
+            
+            # Remap both the version with and without the slash
+            ARGS="$ARGS --remap '$BASE_URL/ $FILE_URI/' --remap '$BASE_URL $FILE_URI'"
           fi
 
           # 4. Handle ignores from .urlignore
@@ -94,10 +97,9 @@ jobs:
             ARGS="$ARGS --exclude-file '$URLIGNORE_PATH'"
           fi
 
-          # 5. Define scan targets (HTML files)
+          # 5. Define scan targets
           SCAN_TARGETS="$ABS_SITE_PATH/**/*.html"
           
-          # Combine into final output
           echo "args=$ARGS $SCAN_TARGETS" >> $GITHUB_OUTPUT
 
       - name: 'Run Link Checker (Attempt 1)'
