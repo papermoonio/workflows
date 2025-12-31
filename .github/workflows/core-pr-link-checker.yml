@@ -74,27 +74,31 @@ jobs:
           MKDOCS_REPO="${{ steps.vars.outputs.mkdocs_repo_name }}"
           ABS_SITE_PATH="${{ github.workspace }}/${MKDOCS_REPO}/site${{ inputs.root_dir }}"
           
-          # 2. Base arguments
-          # --include-index: handles the /quickstart -> /quickstart/index.html mapping
-          # --exclude '.*#.*': Regex to ignore any URL with a fragment before Lychee tries to find the file
-          ARGS="--root-dir $ABS_SITE_PATH --verbose --no-progress --accept 429,403 --include-index --exclude '.*#.*'"
+          # 2. Create a dynamic ignore file to handle fragments (#)
+          # This is more robust than passing --exclude via CLI for local files.
+          IGNORE_FILE="${{ github.workspace }}/.lycheeignore_dynamic"
+          echo ".*#.*" > "$IGNORE_FILE"
           
-          # 3. Add Remap Logic (Production URL -> Local file:// URI)
+          # Add content from .urlignore if it exists
+          URLIGNORE_PATH="${{ github.workspace }}/${MKDOCS_REPO}/.urlignore"
+          if [[ -f "$URLIGNORE_PATH" ]]; then
+            cat "$URLIGNORE_PATH" >> "$IGNORE_FILE"
+          fi
+
+          # 3. Base arguments
+          # --include-index: Crucial to resolve /quickstart as /quickstart/index.html
+          ARGS="--root-dir $ABS_SITE_PATH --verbose --no-progress --accept 429,403 --include-index --exclude-file $IGNORE_FILE"
+          
+          # 4. Add Remap Logic (Production URL -> Local file:// URI)
           if [[ -n "${{ inputs.url }}" ]]; then
-            # Strip trailing slash from URL to ensure clean mapping
+            # Strip trailing slash from input URL for a clean base
             BASE_URL=$(echo "${{ inputs.url }}" | sed 's/\/$//')
             
             # Map production URL to the local filesystem
             FILE_URI="file://$ABS_SITE_PATH"
             
-            # Remap both the version with and without the slash
+            # We remap both the directory-style and the direct-style
             ARGS="$ARGS --remap '$BASE_URL/ $FILE_URI/' --remap '$BASE_URL $FILE_URI'"
-          fi
-
-          # 4. Handle ignores from .urlignore
-          URLIGNORE_PATH="${{ github.workspace }}/${MKDOCS_REPO}/.urlignore"
-          if [[ -f "$URLIGNORE_PATH" ]]; then
-            ARGS="$ARGS --exclude-file '$URLIGNORE_PATH'"
           fi
 
           # 5. Define scan targets
