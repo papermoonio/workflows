@@ -75,15 +75,15 @@ jobs:
           ABS_SITE_PATH="${{ github.workspace }}/${MKDOCS_REPO}/site${{ inputs.root_dir }}"
           
           # 2. Base arguments
-          # --exclude '__tabbed_': Fixes the "The given URI is invalid" error for Material tabs
-          ARGS="--root-dir $ABS_SITE_PATH --verbose --no-progress --accept 429,403 --exclude '__tabbed_'"
+          # --include-index: Crucial for file:// - treats /quickstart/ as /quickstart/index.html
+          # --exclude '#': Ignores fragments/anchors (fixing __tabbed_ and header errors)
+          ARGS="--root-dir $ABS_SITE_PATH --verbose --no-progress --accept 429,403 --include-index --exclude '#'"
           
           # 3. Add Remap Logic (Production URL -> Local file:// URI)
           if [[ -n "${{ inputs.url }}" ]]; then
             BASE_URL="${{ inputs.url }}"
             [[ "$BASE_URL" != */ ]] && BASE_URL="$BASE_URL/"
             
-            # Map production URL to the local filesystem
             FILE_URI="file://$ABS_SITE_PATH/"
             ARGS="$ARGS --remap '$BASE_URL $FILE_URI'"
           fi
@@ -94,10 +94,11 @@ jobs:
             ARGS="$ARGS --exclude-file '$URLIGNORE_PATH'"
           fi
 
-          # 5. Target the scan to the built HTML files
-          ARGS="$ARGS $ABS_SITE_PATH/**/*.html"
+          # 5. Define scan targets (HTML files)
+          SCAN_TARGETS="$ABS_SITE_PATH/**/*.html"
           
-          echo "args=$ARGS" >> $GITHUB_OUTPUT
+          # Combine into final output
+          echo "args=$ARGS $SCAN_TARGETS" >> $GITHUB_OUTPUT
 
       - name: 'Run Link Checker (Attempt 1)'
         id: lychee1
