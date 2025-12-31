@@ -112,7 +112,7 @@ jobs:
           cache: 'pip'
 
       - name: 'Install dependencies'
-        working-directory: ${{ matrix.matrix.mkdocs_repo_name }}
+        working-directory: ${{ matrix.mkdocs_repo_name }}
         run: |
           pip install --upgrade pip
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
