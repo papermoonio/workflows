@@ -15,7 +15,7 @@ on:
       url:
         required: true
         type: string
-        description: 'The base URL of the deployed docs site (e.g., https://docs.tanssi.network)'
+        description: 'The base URL of the deployed docs site (e.g., https://docs.project.com)'
       root_dir:
         required: false
         type: string
@@ -70,36 +70,35 @@ jobs:
         id: lychee_args
         shell: bash
         run: |
-          # 1. Define paths
+          # 1. Define the absolute path to the local site
           MKDOCS_REPO="${{ steps.vars.outputs.mkdocs_repo_name }}"
           ABS_SITE_PATH="${{ github.workspace }}/${MKDOCS_REPO}/site${{ inputs.root_dir }}"
           
           # 2. Base arguments
-          ARGS="--root-dir $ABS_SITE_PATH --verbose --no-progress --accept 429,403"
+          # --exclude '__tabbed_': Fixes the "The given URI is invalid" error for Material tabs
+          ARGS="--root-dir $ABS_SITE_PATH --verbose --no-progress --accept 429,403 --exclude '__tabbed_'"
           
           # 3. Add Remap Logic (Production URL -> Local file:// URI)
-          # This replaces the old Step 6 (detecting changed files for exclusions)
           if [[ -n "${{ inputs.url }}" ]]; then
             BASE_URL="${{ inputs.url }}"
             [[ "$BASE_URL" != */ ]] && BASE_URL="$BASE_URL/"
             
-            # Use file:// prefix to ensure Lychee treats it as a local URI
+            # Map production URL to the local filesystem
             FILE_URI="file://$ABS_SITE_PATH/"
             ARGS="$ARGS --remap '$BASE_URL $FILE_URI'"
           fi
 
-          # 4. Handle ignores
+          # 4. Handle ignores from .urlignore
           URLIGNORE_PATH="${{ github.workspace }}/${MKDOCS_REPO}/.urlignore"
           if [[ -f "$URLIGNORE_PATH" ]]; then
             ARGS="$ARGS --exclude-file '$URLIGNORE_PATH'"
           fi
 
-          # 5. Define scan targets (HTML files)
+          # 5. Target the scan to the built HTML files
           ARGS="$ARGS $ABS_SITE_PATH/**/*.html"
           
           echo "args=$ARGS" >> $GITHUB_OUTPUT
 
-      # ATTEMPT 1
       - name: 'Run Link Checker (Attempt 1)'
         id: lychee1
         uses: lycheeverse/lychee-action@v2.4.1
@@ -112,7 +111,6 @@ jobs:
         if: steps.lychee1.outcome == 'failure'
         run: sleep 60
 
-      # ATTEMPT 2
       - name: 'Run Link Checker (Attempt 2)'
         if: steps.lychee1.outcome == 'failure'
         id: lychee2
@@ -126,7 +124,6 @@ jobs:
         if: steps.lychee1.outcome == 'failure' && steps.lychee2.outcome == 'failure'
         run: sleep 120
 
-      # ATTEMPT 3
       - name: 'Run Link Checker (Attempt 3)'
         if: steps.lychee1.outcome == 'failure' && steps.lychee2.outcome == 'failure'
         id: lychee3
