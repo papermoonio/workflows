@@ -112,7 +112,7 @@ jobs:
           cache: 'pip'
 
       - name: 'Install dependencies'
-        working-directory: ${{ matrix.mkdocs_repo_name }}
+        working-directory: ${{ matrix.matrix.mkdocs_repo_name }}
         run: |
           pip install --upgrade pip
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
@@ -142,11 +142,15 @@ jobs:
         shell: bash
         run: |
           ABS_SITE_PATH="$(pwd)/${{ matrix.mkdocs_repo_name }}/site"
-          ARGS="--root-dir $ABS_SITE_PATH --verbose --no-progress --accept 429,403"
+          
+          # Added --exclude '__tabbed_' to prevent false positives on Material UI tabs
+          ARGS="--root-dir $ABS_SITE_PATH --verbose --no-progress --accept 429,403 --exclude '__tabbed_'"
           
           if [[ -n "${{ steps.mkdocs_cfg.outputs.site_url }}" ]]; then
             BASE_URL="${{ steps.mkdocs_cfg.outputs.site_url }}"
             [[ "$BASE_URL" != */ ]] && BASE_URL="$BASE_URL/"
+            
+            # Use file:// prefix for local remapping
             FILE_URI="file://$ABS_SITE_PATH/"
             ARGS="$ARGS --remap '$BASE_URL $FILE_URI'"
           fi
