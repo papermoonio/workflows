@@ -1,4 +1,4 @@
-name: Prevent Merge on Non-Whitelisted PRs
+name: General - Prevent Merge on Non-Whitelisted PRs
 
 on:
   workflow_call:
