@@ -142,15 +142,13 @@ jobs:
         shell: bash
         run: |
           ABS_SITE_PATH="$(pwd)/${{ matrix.mkdocs_repo_name }}/site"
-          
-          # Added --exclude '__tabbed_' to prevent false positives on Material UI tabs
-          ARGS="--root-dir $ABS_SITE_PATH --verbose --no-progress --accept 429,403 --exclude '__tabbed_'"
+          # --exclude '#': Crucial for bypassing those problematic UI fragments
+          # --include-index: Maps directories to index.html automatically
+          ARGS="--root-dir $ABS_SITE_PATH --verbose --no-progress --accept 429,403 --include-index --exclude '#'"
           
           if [[ -n "${{ steps.mkdocs_cfg.outputs.site_url }}" ]]; then
             BASE_URL="${{ steps.mkdocs_cfg.outputs.site_url }}"
             [[ "$BASE_URL" != */ ]] && BASE_URL="$BASE_URL/"
-            
-            # Use file:// prefix for local remapping
             FILE_URI="file://$ABS_SITE_PATH/"
             ARGS="$ARGS --remap '$BASE_URL $FILE_URI'"
           fi
@@ -205,6 +203,7 @@ jobs:
         id: lychee_status
         shell: bash
         run: |
+          # We only consider the workflow failed if ALL THREE attempts failed.
           if [[ "${{ steps.lychee1.outcome }}" == "success" || "${{ steps.lychee2.outcome }}" == "success" || "${{ steps.lychee3.outcome }}" == "success" ]]; then
             echo "has_broken_links=false" >> $GITHUB_OUTPUT
           else
@@ -216,10 +215,12 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.select_token.outputs.token }}
         run: |
+          # Read the file produced by Attempt 3 (which will be the same path as 1 and 2 but updated)
           report_body=$(cat ./${{ matrix.mkdocs_repo_name }}/lychee-report.md)
+          
           gh issue create \
             --repo "${{ matrix.docs_repo }}" \
             --title "Broken Links Detected on $(date +'%Y-%m-%d')" \
-            --body "### 🚨 Broken Links Report
+            --body "### 🚨 Broken Links Report (Final Attempt)
             
             $report_body"
