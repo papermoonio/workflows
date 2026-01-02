@@ -128,18 +128,19 @@ jobs:
         id: serve
         shell: bash
         run: |
-          ABS_SITE_ROOT="$(pwd)/${{ matrix.mkdocs_repo_name }}/site"
+          # Ensure we serve from the project root including any subdirectories
+          ABS_SITE_ROOT="$(pwd)/${{ matrix.mkdocs_repo_name }}/site${{ matrix.root_dir }}"
           python3 -m http.server 8000 --directory "$ABS_SITE_ROOT" > /tmp/mkdocs_http.log 2>&1 &
           echo "pid=$!" >> "$GITHUB_OUTPUT"
 
           for i in {1..15}; do
             if curl -s http://localhost:8000 > /dev/null; then
-              echo "Server initialized on port 8000"
+              echo "✅ Server ready on port 8000"
               exit 0
             fi
             sleep 2
           done
-          echo "Error: Local server failed to initialize" && exit 1
+          echo "❌ Server failed to start." && exit 1
 
       - name: Extract MkDocs Configuration
         id: mkdocs_cfg
@@ -178,10 +179,13 @@ jobs:
         run: |
           ABS_SITE_PATH="$(pwd)/${{ matrix.mkdocs_repo_name }}/site"
           LOCAL_SERVER="http://localhost:8000"
+          
+          # Base Configuration using TOML for local network stability
           ARGS="--config ${{ steps.lychee_cfg.outputs.cfg }} --root-dir $ABS_SITE_PATH --verbose --no-progress --accept 429,403"
 
           if [[ -n "${{ steps.mkdocs_cfg.outputs.site_url }}" ]]; then
             BASE_URL="$(echo "${{ steps.mkdocs_cfg.outputs.site_url }}" | sed 's/\/$//')"
+            # Standardized remap pairing
             ARGS="$ARGS --remap \"$BASE_URL/ $LOCAL_SERVER/\" --remap \"$BASE_URL $LOCAL_SERVER\""
           fi
 
