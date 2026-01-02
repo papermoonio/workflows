@@ -22,23 +22,24 @@ on:
         type: boolean
         default: true
       mkdocs_branch:
-        description: 'MkDocs repo branch to use (only when running a specific project)'
+        description: 'MkDocs repo branch to use (only for specific project runs)'
         required: false
         type: string
         default: ''
       docs_branch:
-        description: 'Docs content repo branch to use (only when running a specific project)'
+        description: 'Docs content repo branch to use (only for specific project runs)'
         required: false
         type: string
         default: ''
 
 jobs:
   generate-matrix:
+    name: Initialization
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
     steps:
-      - name: Set filtered matrix
+      - name: Define Project Matrix
         id: set-matrix
         shell: bash
         run: |
@@ -60,6 +61,7 @@ jobs:
           echo "matrix=$(echo "$filtered" | jq -c '.')" >> "$GITHUB_OUTPUT"
 
   check-links:
+    name: Check Links (${{ matrix.label }})
     needs: generate-matrix
     runs-on: ubuntu-latest
     strategy:
@@ -68,7 +70,7 @@ jobs:
         include: ${{ fromJson(needs.generate-matrix.outputs.matrix) }}
 
     steps:
-      - name: Select Token
+      - name: Authenticate GitHub Token
         id: select_token
         run: |
           if [ "${{ matrix.label }}" == "Tanssi" ]; then
@@ -77,7 +79,7 @@ jobs:
             echo "token=${{ secrets.GH_404_CHECKER }}" >> $GITHUB_OUTPUT
           fi
 
-      - name: Resolve branches/refs
+      - name: Resolve Environment Refs
         id: refs
         shell: bash
         run: |
@@ -90,14 +92,14 @@ jobs:
           echo "mkdocs_ref=$mkdocs_ref" >> "$GITHUB_OUTPUT"
           echo "docs_ref=$docs_ref" >> "$GITHUB_OUTPUT"
 
-      - name: 'Checkout MkDocs Repo'
+      - name: Checkout Repositories
         uses: actions/checkout@v4
         with:
           repository: ${{ matrix.mkdocs_repo }}
           ref: ${{ steps.refs.outputs.mkdocs_ref }}
           path: ${{ matrix.mkdocs_repo_name }}
 
-      - name: 'Checkout Docs Content Repo'
+      - name: Checkout Documentation Content
         uses: actions/checkout@v4
         with:
           repository: ${{ matrix.docs_repo }}
@@ -105,24 +107,41 @@ jobs:
           fetch-depth: 0
           path: '${{ matrix.mkdocs_repo_name}}/${{ matrix.docs_repo_name}}'
 
-      - name: 'Set up Python'
+      - name: Setup Python Environment
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
           cache: 'pip'
 
-      - name: 'Install dependencies'
+      - name: Install Site Dependencies
         working-directory: ${{ matrix.mkdocs_repo_name }}
         run: |
           pip install --upgrade pip
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
           pip install mkdocs-material mkdocs
 
-      - name: 'Build MkDocs site'
+      - name: Build Static Site
         working-directory: ${{ matrix.mkdocs_repo_name }}
         run: mkdocs build -d site${{ matrix.root_dir }}
 
-      - name: Read MkDocs config
+      - name: Initialize Local Web Server
+        id: serve
+        shell: bash
+        run: |
+          ABS_SITE_ROOT="$(pwd)/${{ matrix.mkdocs_repo_name }}/site"
+          python3 -m http.server 8000 --directory "$ABS_SITE_ROOT" > /tmp/mkdocs_http.log 2>&1 &
+          echo "pid=$!" >> "$GITHUB_OUTPUT"
+
+          for i in {1..15}; do
+            if curl -s http://localhost:8000 > /dev/null; then
+              echo "Server initialized on port 8000"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Error: Local server failed to initialize" && exit 1
+
+      - name: Extract MkDocs Configuration
         id: mkdocs_cfg
         working-directory: ${{ matrix.mkdocs_repo_name }}
         shell: bash
@@ -137,90 +156,109 @@ jobs:
               print(f"site_url=")
           PY
 
-      - name: Prepare Lychee Arguments
+      - name: Configure Lychee Engine
+        id: lychee_cfg
+        shell: bash
+        run: |
+          cat > /tmp/lychee.ci.toml <<'TOML'
+          exclude_all_private = false
+          exclude_loopback = false
+          exclude_private = false
+          exclude_link_local = false
+          include = [
+            '^http://localhost:8000',
+            '^http://127\.0\.0\.1:8000'
+          ]
+          TOML
+          echo "cfg=/tmp/lychee.ci.toml" >> "$GITHUB_OUTPUT"
+
+      - name: Generate Link Checker Arguments
         id: lychee_args
         shell: bash
         run: |
           ABS_SITE_PATH="$(pwd)/${{ matrix.mkdocs_repo_name }}/site"
-          # --exclude '#': Crucial for bypassing those problematic UI fragments
-          # --include-index: Maps directories to index.html automatically
-          ARGS="--root-dir $ABS_SITE_PATH --verbose --no-progress --accept 429,403 --include-index --exclude '#'"
-          
+          LOCAL_SERVER="http://localhost:8000"
+          ARGS="--config ${{ steps.lychee_cfg.outputs.cfg }} --root-dir $ABS_SITE_PATH --verbose --no-progress --accept 429,403"
+
           if [[ -n "${{ steps.mkdocs_cfg.outputs.site_url }}" ]]; then
-            BASE_URL="${{ steps.mkdocs_cfg.outputs.site_url }}"
-            [[ "$BASE_URL" != */ ]] && BASE_URL="$BASE_URL/"
-            FILE_URI="file://$ABS_SITE_PATH/"
-            ARGS="$ARGS --remap '$BASE_URL $FILE_URI'"
+            BASE_URL="$(echo "${{ steps.mkdocs_cfg.outputs.site_url }}" | sed 's/\/$//')"
+            ARGS="$ARGS --remap \"$BASE_URL/ $LOCAL_SERVER/\" --remap \"$BASE_URL $LOCAL_SERVER\""
           fi
 
-          if [[ -f "$(pwd)/${{ matrix.mkdocs_repo_name }}/.urlignore" ]]; then
-            ARGS="$ARGS --exclude-file '$(pwd)/${{ matrix.mkdocs_repo_name }}/.urlignore'"
+          URLIGNORE_PATH="$(pwd)/${{ matrix.mkdocs_repo_name }}/.urlignore"
+          if [[ -f "$URLIGNORE_PATH" ]]; then
+            ARGS="$ARGS --exclude-file $URLIGNORE_PATH"
           fi
 
           echo "args=$ARGS" >> $GITHUB_OUTPUT
 
-      - name: Run Link Checker (Attempt 1)
+      - name: Link Check - Attempt 1
         id: lychee1
         uses: lycheeverse/lychee-action@v2.4.1
         with:
-          args: >
-            ${{ steps.lychee_args.outputs.args }}
-            './${{ matrix.mkdocs_repo_name }}/site/**/*.html'
+          args: ${{ steps.lychee_args.outputs.args }} './${{ matrix.mkdocs_repo_name }}/site/**/*.html'
           output: ./${{ matrix.mkdocs_repo_name }}/lychee-report.md
         continue-on-error: true
 
-      - name: Backoff 1
+      - name: Retry Delay (60s)
         if: steps.lychee1.outcome == 'failure'
         run: sleep 60
 
-      - name: Run Link Checker (Attempt 2)
+      - name: Link Check - Attempt 2
         if: steps.lychee1.outcome == 'failure'
         id: lychee2
         uses: lycheeverse/lychee-action@v2.4.1
         with:
-          args: >
-            ${{ steps.lychee_args.outputs.args }}
-            './${{ matrix.mkdocs_repo_name }}/site/**/*.html'
+          args: ${{ steps.lychee_args.outputs.args }} './${{ matrix.mkdocs_repo_name }}/site/**/*.html'
           output: ./${{ matrix.mkdocs_repo_name }}/lychee-report.md
         continue-on-error: true
 
-      - name: Backoff 2
+      - name: Retry Delay (120s)
         if: steps.lychee1.outcome == 'failure' && steps.lychee2.outcome == 'failure'
         run: sleep 120
 
-      - name: Run Link Checker (Attempt 3)
+      - name: Link Check - Attempt 3
         if: steps.lychee1.outcome == 'failure' && steps.lychee2.outcome == 'failure'
         id: lychee3
         uses: lycheeverse/lychee-action@v2.4.1
         with:
-          args: >
-            ${{ steps.lychee_args.outputs.args }}
-            './${{ matrix.mkdocs_repo_name }}/site/**/*.html'
+          args: ${{ steps.lychee_args.outputs.args }} './${{ matrix.mkdocs_repo_name }}/site/**/*.html'
           output: ./${{ matrix.mkdocs_repo_name }}/lychee-report.md
         continue-on-error: true
 
-      - name: Determine Status
+      - name: Consolidate Results
         id: lychee_status
         shell: bash
         run: |
-          # We only consider the workflow failed if ALL THREE attempts failed.
           if [[ "${{ steps.lychee1.outcome }}" == "success" || "${{ steps.lychee2.outcome }}" == "success" || "${{ steps.lychee3.outcome }}" == "success" ]]; then
             echo "has_broken_links=false" >> $GITHUB_OUTPUT
           else
             echo "has_broken_links=true" >> $GITHUB_OUTPUT
           fi
+          
+          CREATE_ISSUE="false"
+          if [[ "${{ github.event_name }}" == "schedule" ]] || [[ "${{ github.event.inputs.create_issue }}" == "true" ]]; then
+            CREATE_ISSUE="true"
+          fi
+          echo "should_open_issue=$CREATE_ISSUE" >> $GITHUB_OUTPUT
 
-      - name: Create Issue on Failure
-        if: steps.lychee_status.outputs.has_broken_links == 'true' && ((github.event_name == 'workflow_dispatch' && github.event.inputs.create_issue == 'true') || github.event_name == 'schedule')
+      - name: Cleanup Local Server
+        if: always()
+        run: kill ${{ steps.serve.outputs.pid }} || true
+
+      - name: Create Failure Issue
+        if: steps.lychee_status.outputs.has_broken_links == 'true' && steps.lychee_status.outputs.should_open_issue == 'true'
         env:
           GH_TOKEN: ${{ steps.select_token.outputs.token }}
         run: |
-          # Read the file produced by Attempt 3 (which will be the same path as 1 and 2 but updated)
-          report_body=$(cat ./${{ matrix.mkdocs_repo_name }}/lychee-report.md)
-          
+          REPORT=$(cat ./${{ matrix.mkdocs_repo_name }}/lychee-report.md)
           gh issue create \
             --repo "${{ matrix.docs_repo }}" \
-            --title "Broken Links Detected on $(date +'%Y-%m-%d')" \
-            --body "### 🚨 Broken Links Report (Final Attempt)
-            
-            $report_body"
+            --title "Broken Links Found: ${{ matrix.label }}" \
+            --body "### 🚨 Link Checker Report
+            **Project:** ${{ matrix.label }}
+            **Date:** $(date +'%Y-%m-%d')
+            **Workflow Run:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+            ---
+            $REPORT"
