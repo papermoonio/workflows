@@ -71,7 +71,8 @@ jobs:
         id: serve
         shell: bash
         run: |
-          ABS_SITE_ROOT="$(pwd)/${{ steps.vars.outputs.mkdocs_repo_name }}/site"
+          # Ensure we serve from the correct root directory if provided
+          ABS_SITE_ROOT="$(pwd)/${{ steps.vars.outputs.mkdocs_repo_name }}/site${{ inputs.root_dir }}"
           python3 -m http.server 8000 --directory "$ABS_SITE_ROOT" > /tmp/mkdocs_http.log 2>&1 &
           echo "pid=$!" >> "$GITHUB_OUTPUT"
           
@@ -108,16 +109,13 @@ jobs:
           ABS_SITE_PATH="$(pwd)/${{ steps.vars.outputs.mkdocs_repo_name }}/site"
           LOCAL_SERVER="http://localhost:8000"
           
-          # Base Configuration using the TOML config file
           ARGS="--config ${{ steps.lychee_cfg.outputs.cfg }} --root-dir $ABS_SITE_PATH --verbose --no-progress --accept 429,403"
           
-          # Remap canonical URL to localhost
           if [[ -n "${{ inputs.url }}" ]]; then
             BASE_URL="$(echo "${{ inputs.url }}" | sed 's/\/$//')"
             ARGS="$ARGS --remap \"$BASE_URL/ $LOCAL_SERVER/\" --remap \"$BASE_URL $LOCAL_SERVER\""
           fi
 
-          # Incorporate .urlignore if present
           URLIGNORE_PATH="$(pwd)/${{ steps.vars.outputs.mkdocs_repo_name }}/.urlignore"
           if [[ -f "$URLIGNORE_PATH" ]]; then
             ARGS="$ARGS --exclude-file $URLIGNORE_PATH"
@@ -132,9 +130,9 @@ jobs:
           args: ${{ steps.lychee_args.outputs.args }} './${{ steps.vars.outputs.mkdocs_repo_name }}/site/**/*.html'
         continue-on-error: true
 
-      - name: Retry Delay (60s)
+      - name: Retry Delay (10s)
         if: steps.lychee1.outcome == 'failure'
-        run: sleep 60
+        run: sleep 10
 
       - name: Link Check - Attempt 2
         if: steps.lychee1.outcome == 'failure'
@@ -144,27 +142,15 @@ jobs:
           args: ${{ steps.lychee_args.outputs.args }} './${{ steps.vars.outputs.mkdocs_repo_name }}/site/**/*.html'
         continue-on-error: true
 
-      - name: Retry Delay (120s)
-        if: steps.lychee1.outcome == 'failure' && steps.lychee2.outcome == 'failure'
-        run: sleep 120
-
-      - name: Link Check - Attempt 3
-        if: steps.lychee1.outcome == 'failure' && steps.lychee2.outcome == 'failure'
-        id: lychee3
-        uses: lycheeverse/lychee-action@v2.4.1
-        with:
-          args: ${{ steps.lychee_args.outputs.args }} './${{ steps.vars.outputs.mkdocs_repo_name }}/site/**/*.html'
-        continue-on-error: true
-
       - name: Determine Final Status
         if: always()
         shell: bash
         run: |
-          if [[ "${{ steps.lychee1.outcome }}" == "success" || "${{ steps.lychee2.outcome }}" == "success" || "${{ steps.lychee3.outcome }}" == "success" ]]; then
+          if [[ "${{ steps.lychee1.outcome }}" == "success" || "${{ steps.lychee2.outcome }}" == "success" ]]; then
             echo "✅ Link check passed."
             exit 0
           else
-            echo "❌ Link check failed after 3 attempts."
+            echo "❌ Link check failed after 2 attempts."
             exit 1
           fi
 
