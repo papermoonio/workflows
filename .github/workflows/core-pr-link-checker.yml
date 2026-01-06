@@ -71,7 +71,6 @@ jobs:
         id: serve
         shell: bash
         run: |
-          # Ensure we serve from the correct root directory if provided
           ABS_SITE_ROOT="$(pwd)/${{ steps.vars.outputs.mkdocs_repo_name }}/site${{ inputs.root_dir }}"
           python3 -m http.server 8000 --directory "$ABS_SITE_ROOT" > /tmp/mkdocs_http.log 2>&1 &
           echo "pid=$!" >> "$GITHUB_OUTPUT"
@@ -109,7 +108,11 @@ jobs:
           ABS_SITE_PATH="$(pwd)/${{ steps.vars.outputs.mkdocs_repo_name }}/site"
           LOCAL_SERVER="http://localhost:8000"
           
-          ARGS="--config ${{ steps.lychee_cfg.outputs.cfg }} --root-dir $ABS_SITE_PATH --verbose --no-progress --accept 429,403"
+          # Consolidated configuration:
+          # --accept 429,403: Ignore rate limits/forbidden immediately
+          # --max-retries 3: Lychee handles retries for actual errors (404, 500, etc.)
+          # --retry-wait-time 60: Wait period for exponential backoff
+          ARGS="--config ${{ steps.lychee_cfg.outputs.cfg }} --root-dir $ABS_SITE_PATH --verbose --no-progress --accept 429,403 --max-retries 3 --retry-wait-time 60"
           
           if [[ -n "${{ inputs.url }}" ]]; then
             BASE_URL="$(echo "${{ inputs.url }}" | sed 's/\/$//')"
@@ -123,36 +126,11 @@ jobs:
 
           echo "args=$ARGS" >> $GITHUB_OUTPUT
 
-      - name: Link Check - Attempt 1
-        id: lychee1
+      - name: Link Check
+        id: lychee
         uses: lycheeverse/lychee-action@v2.4.1
         with:
           args: ${{ steps.lychee_args.outputs.args }} './${{ steps.vars.outputs.mkdocs_repo_name }}/site/**/*.html'
-        continue-on-error: true
-
-      - name: Retry Delay (10s)
-        if: steps.lychee1.outcome == 'failure'
-        run: sleep 10
-
-      - name: Link Check - Attempt 2
-        if: steps.lychee1.outcome == 'failure'
-        id: lychee2
-        uses: lycheeverse/lychee-action@v2.4.1
-        with:
-          args: ${{ steps.lychee_args.outputs.args }} './${{ steps.vars.outputs.mkdocs_repo_name }}/site/**/*.html'
-        continue-on-error: true
-
-      - name: Determine Final Status
-        if: always()
-        shell: bash
-        run: |
-          if [[ "${{ steps.lychee1.outcome }}" == "success" || "${{ steps.lychee2.outcome }}" == "success" ]]; then
-            echo "✅ Link check passed."
-            exit 0
-          else
-            echo "❌ Link check failed after 2 attempts."
-            exit 1
-          fi
 
       - name: Cleanup Local Server
         if: always()
