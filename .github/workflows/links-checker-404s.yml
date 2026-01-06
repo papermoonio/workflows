@@ -181,9 +181,9 @@ jobs:
           
           # Built-in Retry Logic: 
           # --max-retries 3: Number of times to retry a failed link
-          # --retry-wait-time 60: Seconds to wait before the first retry (exponential backoff follows)
+          # --retry-wait-time 10: Seconds to wait before the first retry (exponential backoff follows)
           # --accept 429,403: Treats these codes as success immediately (no retry triggered for these)
-          ARGS="--config ${{ steps.lychee_cfg.outputs.cfg }} --root-dir $ABS_SITE_PATH --verbose --no-progress --accept 429,403 --max-retries 3 --retry-wait-time 60"
+          ARGS="--config ${{ steps.lychee_cfg.outputs.cfg }} --root-dir $ABS_SITE_PATH --verbose --no-progress --accept 429,403 --max-retries 3 --retry-wait-time 10"
 
           if [[ -n "${{ steps.mkdocs_cfg.outputs.site_url }}" ]]; then
             BASE_URL="$(echo "${{ steps.mkdocs_cfg.outputs.site_url }}" | sed 's/\/$//')"
