@@ -128,7 +128,6 @@ jobs:
         id: serve
         shell: bash
         run: |
-          # Ensure we serve from the project root including any subdirectories
           ABS_SITE_ROOT="$(pwd)/${{ matrix.mkdocs_repo_name }}/site${{ matrix.root_dir }}"
           python3 -m http.server 8000 --directory "$ABS_SITE_ROOT" > /tmp/mkdocs_http.log 2>&1 &
           echo "pid=$!" >> "$GITHUB_OUTPUT"
@@ -180,12 +179,14 @@ jobs:
           ABS_SITE_PATH="$(pwd)/${{ matrix.mkdocs_repo_name }}/site"
           LOCAL_SERVER="http://localhost:8000"
           
-          # Base Configuration using TOML for local network stability
-          ARGS="--config ${{ steps.lychee_cfg.outputs.cfg }} --root-dir $ABS_SITE_PATH --verbose --no-progress --accept 429,403"
+          # Built-in Retry Logic: 
+          # --max-retries 3: Number of times to retry a failed link
+          # --retry-wait-time 10: Seconds to wait before the first retry (exponential backoff follows)
+          # --accept 429,403: Treats these codes as success immediately (no retry triggered for these)
+          ARGS="--config ${{ steps.lychee_cfg.outputs.cfg }} --root-dir $ABS_SITE_PATH --verbose --no-progress --accept 429,403 --max-retries 3 --retry-wait-time 10"
 
           if [[ -n "${{ steps.mkdocs_cfg.outputs.site_url }}" ]]; then
             BASE_URL="$(echo "${{ steps.mkdocs_cfg.outputs.site_url }}" | sed 's/\/$//')"
-            # Standardized remap pairing
             ARGS="$ARGS --remap \"$BASE_URL/ $LOCAL_SERVER/\" --remap \"$BASE_URL $LOCAL_SERVER\""
           fi
 
@@ -196,34 +197,8 @@ jobs:
 
           echo "args=$ARGS" >> $GITHUB_OUTPUT
 
-      - name: Link Check - Attempt 1
-        id: lychee1
-        uses: lycheeverse/lychee-action@v2.4.1
-        with:
-          args: ${{ steps.lychee_args.outputs.args }} './${{ matrix.mkdocs_repo_name }}/site/**/*.html'
-          output: ./${{ matrix.mkdocs_repo_name }}/lychee-report.md
-        continue-on-error: true
-
-      - name: Retry Delay (60s)
-        if: steps.lychee1.outcome == 'failure'
-        run: sleep 60
-
-      - name: Link Check - Attempt 2
-        if: steps.lychee1.outcome == 'failure'
-        id: lychee2
-        uses: lycheeverse/lychee-action@v2.4.1
-        with:
-          args: ${{ steps.lychee_args.outputs.args }} './${{ matrix.mkdocs_repo_name }}/site/**/*.html'
-          output: ./${{ matrix.mkdocs_repo_name }}/lychee-report.md
-        continue-on-error: true
-
-      - name: Retry Delay (120s)
-        if: steps.lychee1.outcome == 'failure' && steps.lychee2.outcome == 'failure'
-        run: sleep 120
-
-      - name: Link Check - Attempt 3
-        if: steps.lychee1.outcome == 'failure' && steps.lychee2.outcome == 'failure'
-        id: lychee3
+      - name: Link Check
+        id: lychee
         uses: lycheeverse/lychee-action@v2.4.1
         with:
           args: ${{ steps.lychee_args.outputs.args }} './${{ matrix.mkdocs_repo_name }}/site/**/*.html'
@@ -234,7 +209,7 @@ jobs:
         id: lychee_status
         shell: bash
         run: |
-          if [[ "${{ steps.lychee1.outcome }}" == "success" || "${{ steps.lychee2.outcome }}" == "success" || "${{ steps.lychee3.outcome }}" == "success" ]]; then
+          if [[ "${{ steps.lychee.outcome }}" == "success" ]]; then
             echo "has_broken_links=false" >> $GITHUB_OUTPUT
           else
             echo "has_broken_links=true" >> $GITHUB_OUTPUT
