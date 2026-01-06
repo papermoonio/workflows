@@ -111,8 +111,8 @@ jobs:
           # Consolidated configuration:
           # --accept 429,403: Ignore rate limits/forbidden immediately
           # --max-retries 3: Lychee handles retries for actual errors (404, 500, etc.)
-          # --retry-wait-time 60: Wait period for exponential backoff
-          ARGS="--config ${{ steps.lychee_cfg.outputs.cfg }} --root-dir $ABS_SITE_PATH --verbose --no-progress --accept 429,403 --max-retries 3 --retry-wait-time 60"
+          # --retry-wait-time 10: Wait period for exponential backoff
+          ARGS="--config ${{ steps.lychee_cfg.outputs.cfg }} --root-dir $ABS_SITE_PATH --verbose --no-progress --accept 429,403 --max-retries 3 --retry-wait-time 10"
           
           if [[ -n "${{ inputs.url }}" ]]; then
             BASE_URL="$(echo "${{ inputs.url }}" | sed 's/\/$//')"
