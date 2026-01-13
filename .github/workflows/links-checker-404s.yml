@@ -13,6 +13,7 @@ on:
           - All
           - Tanssi
           - Moonbeam
+          - DataHaven
           - Wormhole
           - kluster.ai
           - Polkadot
@@ -49,6 +50,7 @@ jobs:
               { "mkdocs_repo": "papermoonio/kluster-mkdocs", "docs_repo": "kluster-ai/docs", "mkdocs_repo_name": "kluster-mkdocs", "docs_repo_name": "kluster-docs", "root_dir": "", "label": "kluster.ai" },
               { "mkdocs_repo": "papermoonio/polkadot-mkdocs", "docs_repo": "polkadot-developers/polkadot-docs", "mkdocs_repo_name": "polkadot-mkdocs", "docs_repo_name": "polkadot-docs", "root_dir": "", "label": "Polkadot" },
               { "mkdocs_repo": "papermoonio/moonbeam-mkdocs", "docs_repo": "moonbeam-foundation/moonbeam-docs", "mkdocs_repo_name": "moonbeam-mkdocs", "docs_repo_name": "moonbeam-docs", "root_dir": "", "label": "Moonbeam" },
+              { "mkdocs_repo": "papermoonio/datahaven-mkdocs", "docs_repo": "datahaven-xyz/datahaven-docs", "mkdocs_repo_name": "datahaven-mkdocs", "docs_repo_name": "datahaven-docs", "root_dir": "", "label": "DataHaven" },
               { "mkdocs_repo": "papermoonio/tanssi-mkdocs", "docs_repo": "moondance-labs/tanssi-docs", "mkdocs_repo_name": "tanssi-mkdocs", "docs_repo_name": "tanssi-docs", "root_dir": "", "label": "Tanssi" },
               { "mkdocs_repo": "papermoonio/wormhole-mkdocs", "docs_repo": "wormhole-foundation/wormhole-docs", "mkdocs_repo_name": "wormhole-mkdocs", "docs_repo_name": "wormhole-docs", "root_dir": "/docs", "label": "Wormhole" }
             ]
