@@ -47,7 +47,9 @@ jobs:
         with:
           repository: ${{ inputs.docs_repo }}
           path: ${{ steps.vars.outputs.mkdocs_repo_name }}/${{ steps.vars.outputs.docs_checkout_path }}
-          ref: ${{ github.event.pull_request.head.ref }}
+          # We check out the simulated merge commit (refs/pull/ID/merge)
+          # instead of the raw branch head.
+          ref: refs/pull/${{ github.event.pull_request.number }}/merge
 
       - name: Setup Python Environment
         uses: actions/setup-python@v5
