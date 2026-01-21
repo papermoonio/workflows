@@ -20,6 +20,11 @@ on:
         required: false
         type: string
         default: ''
+      exclude_paths:
+        required: false
+        type: string
+        default: '[]'
+        description: 'JSON array of regex patterns to ignore (e.g. ["pt/.*", "es/.*"])'
     secrets:
       GH_TOKEN:
         required: true
@@ -47,8 +52,7 @@ jobs:
         with:
           repository: ${{ inputs.docs_repo }}
           path: ${{ steps.vars.outputs.mkdocs_repo_name }}/${{ steps.vars.outputs.docs_checkout_path }}
-          # We check out the simulated merge commit (refs/pull/ID/merge)
-          # instead of the raw branch head.
+          # Checks out the simulated merge commit to catch issues that would occur after merging
           ref: refs/pull/${{ github.event.pull_request.number }}/merge
 
       - name: Setup Python Environment
@@ -120,6 +124,17 @@ jobs:
             BASE_URL="$(echo "${{ inputs.url }}" | sed 's/\/$//')"
             ARGS="$ARGS --remap \"$BASE_URL/ $LOCAL_SERVER/\" --remap \"$BASE_URL $LOCAL_SERVER\""
           fi
+
+          # Process exclude_paths JSON array
+          # We write to a temp file to safely iterate without subshell variable issues
+          echo '${{ inputs.exclude_paths }}' | jq -r '.[]' > /tmp/exclusions.txt
+          
+          while read -r pattern; do
+            if [[ -n "$pattern" ]]; then
+              echo "Ignoring pattern: $pattern"
+              ARGS="$ARGS --exclude-path \"$pattern\""
+            fi
+          done < /tmp/exclusions.txt
 
           URLIGNORE_PATH="$(pwd)/${{ steps.vars.outputs.mkdocs_repo_name }}/.urlignore"
           if [[ -f "$URLIGNORE_PATH" ]]; then
