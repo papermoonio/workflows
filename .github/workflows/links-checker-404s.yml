@@ -128,7 +128,7 @@ jobs:
       - name: Build Static Site
         working-directory: ${{ matrix.mkdocs_repo_name }}
         env:
-          MKDOCS_STATIC_I18N_BUILD_ONLY: en
+          BUILD_ONLY_LOCALE: en
         run: mkdocs build -d site${{ matrix.root_dir }}
 
       - name: Initialize Local Web Server
