@@ -70,7 +70,7 @@ jobs:
         working-directory: ${{ steps.vars.outputs.mkdocs_repo_name }}
         env:
           # Forces mkdocs-static-i18n to only build the English version
-          MKDOCS_STATIC_I18N_BUILD_ONLY: en
+          BUILD_ONLY_LOCALE: en
         run: mkdocs build -d site${{ inputs.root_dir }}
 
       - name: Initialize Local Web Server
