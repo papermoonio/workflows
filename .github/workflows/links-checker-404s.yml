@@ -45,8 +45,8 @@ jobs:
         shell: bash
         run: |
           selected="${{ github.event.inputs.selected_project || 'All' }}"
-          # NOTE: We now add "exclude_paths".
-          # For Tanssi, we just put "pt". The logic below will convert it to regex.
+          # NOTE: "exclude_paths" is passed as a JSON array.
+          # The logic below will convert "pt" into regex like "(^|/)pt/".
           all_projects=$(jq -n '
             [
               { "mkdocs_repo": "papermoonio/kluster-mkdocs", "docs_repo": "kluster-ai/docs", "mkdocs_repo_name": "kluster-mkdocs", "docs_repo_name": "kluster-docs", "root_dir": "", "label": "kluster.ai", "exclude_paths": [] },
@@ -174,9 +174,8 @@ jobs:
           LOCAL_SERVER="http://localhost:8000"
 
           # 1. Generate Base TOML Configuration
+          # REMOVED: verbose=true and no_progress=true (causes TOML errors)
           cat > /tmp/lychee.ci.toml <<'TOML'
-          verbose = true
-          no_progress = true
           exclude_all_private = false
           exclude_loopback = false
           exclude_private = false
@@ -243,7 +242,8 @@ jobs:
           ABS_SITE_PATH="$(pwd)/${{ matrix.mkdocs_repo_name }}/site"
           
           # Base arguments using the generated config file
-          ARGS="--config ${{ steps.lychee_cfg.outputs.cfg }} --root-dir $ABS_SITE_PATH"
+          # ADDED: --verbose and --no-progress here as CLI flags
+          ARGS="--config ${{ steps.lychee_cfg.outputs.cfg }} --root-dir $ABS_SITE_PATH --verbose --no-progress"
 
           # Check for .urlignore file
           URLIGNORE_PATH="$(pwd)/${{ matrix.mkdocs_repo_name }}/.urlignore"
