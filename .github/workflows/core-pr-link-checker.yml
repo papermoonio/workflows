@@ -20,11 +20,6 @@ on:
         required: false
         type: string
         default: ''
-      exclude_paths:
-        required: false
-        type: string
-        default: '[]'
-        description: 'JSON array of folder segments to ignore (e.g. ["pt","es"]). Core expands these to regex.'
     secrets:
       GH_TOKEN:
         required: true
@@ -68,17 +63,20 @@ jobs:
         run: |
           pip install --upgrade pip
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          # PyYAML is no longer strictly needed for the fix, but good to have
           pip install mkdocs-material mkdocs
 
       - name: Build Static Site
         working-directory: ${{ steps.vars.outputs.mkdocs_repo_name }}
+        env:
+          # Forces mkdocs-static-i18n to only build the English version
+          MKDOCS_STATIC_I18N_BUILD_ONLY: en
         run: mkdocs build -d site${{ inputs.root_dir }}
 
       - name: Initialize Local Web Server
         id: serve
         shell: bash
         run: |
-          set -euo pipefail
           ABS_SITE_ROOT="$(pwd)/${{ steps.vars.outputs.mkdocs_repo_name }}/site${{ inputs.root_dir }}"
           python3 -m http.server 8000 --directory "$ABS_SITE_ROOT" > /tmp/mkdocs_http.log 2>&1 &
           echo "pid=$!" >> "$GITHUB_OUTPUT"
@@ -97,84 +95,36 @@ jobs:
         id: lychee_cfg
         shell: bash
         run: |
-          set -euo pipefail
-
-          BASE_URL="$(echo "${{ inputs.url }}" | sed 's/\/$//')"
-          LOCAL_SERVER="http://localhost:8000"
-
-          # 1. Generate Base TOML Configuration
           cat > /tmp/lychee.ci.toml <<'TOML'
-          verbose = true
-          no_progress = true
           exclude_all_private = false
           exclude_loopback = false
           exclude_private = false
           exclude_link_local = false
-          
-          # Only parse HTML files (replaces the need for globbing in the command line)
-          extensions = ["html"]
-
           include = [
             '^http://localhost:8000',
             '^http://127\.0\.0\.1:8000'
           ]
-          
-          # Treat these codes as valid to prevent flakes on external rate limits
-          accept = [403, 429]
-          max_retries = 3
-          retry_wait_time = 10
           TOML
-
-          # 2. Append Remap Logic (Deployed URL -> Localhost)
-          if [[ -n "$BASE_URL" ]]; then
-            {
-              echo ""
-              echo "remap = ["
-              echo "  \"${BASE_URL}/ ${LOCAL_SERVER}/\","
-              echo "  \"${BASE_URL} ${LOCAL_SERVER}\""
-              echo "]"
-            } >> /tmp/lychee.ci.toml
-          fi
-
-          # 3. Append Exclude Paths (Dynamic Regex Generation)
-          # We use jq to parse the JSON array input safely
-          jq -r '.[]' <<< '${{ inputs.exclude_paths }}' > /tmp/exclusions_raw.txt || true
-
-          if [[ -s /tmp/exclusions_raw.txt ]]; then
-            echo "" >> /tmp/lychee.ci.toml
-            echo "exclude_path = [" >> /tmp/lychee.ci.toml
-
-            while IFS= read -r token; do
-              [[ -z "$token" ]] && continue
-
-              # If the token contains special regex characters, assume the user provided a raw regex
-              if [[ "$token" =~ [/\.\^\$\*\+\?\(\)\[\]\{\}\|] ]]; then
-                pattern="$token"
-              else
-                # Otherwise, assume it's a simple folder name and wrap it in regex
-                pattern="(^|/)${token}/"
-              fi
-
-              echo "  \"${pattern}\"," >> /tmp/lychee.ci.toml
-            done < /tmp/exclusions_raw.txt
-
-            echo "]" >> /tmp/lychee.ci.toml
-          fi
-
           echo "cfg=/tmp/lychee.ci.toml" >> "$GITHUB_OUTPUT"
 
       - name: Generate Link Checker Arguments
         id: lychee_args
         shell: bash
         run: |
-          set -euo pipefail
+          ABS_SITE_PATH="$(pwd)/${{ steps.vars.outputs.mkdocs_repo_name }}/site"
+          LOCAL_SERVER="http://localhost:8000"
           
-          ABS_SITE_PATH="$(pwd)/${{ steps.vars.outputs.mkdocs_repo_name }}/site${{ inputs.root_dir }}"
+          # Consolidated configuration:
+          # --accept 429,403: Ignore rate limits/forbidden immediately
+          # --max-retries 3: Lychee handles retries for actual errors (404, 500, etc.)
+          # --retry-wait-time 10: Wait period for exponential backoff
+          ARGS="--config ${{ steps.lychee_cfg.outputs.cfg }} --root-dir $ABS_SITE_PATH --verbose --no-progress --accept 429,403 --max-retries 3 --retry-wait-time 10"
           
-          # Base arguments using the generated config file
-          ARGS="--config ${{ steps.lychee_cfg.outputs.cfg }} --root-dir $ABS_SITE_PATH"
-          
-          # Check for .urlignore file
+          if [[ -n "${{ inputs.url }}" ]]; then
+            BASE_URL="$(echo "${{ inputs.url }}" | sed 's/\/$//')"
+            ARGS="$ARGS --remap \"$BASE_URL/ $LOCAL_SERVER/\" --remap \"$BASE_URL $LOCAL_SERVER\""
+          fi
+
           URLIGNORE_PATH="$(pwd)/${{ steps.vars.outputs.mkdocs_repo_name }}/.urlignore"
           if [[ -f "$URLIGNORE_PATH" ]]; then
             ARGS="$ARGS --exclude-file $URLIGNORE_PATH"
@@ -186,9 +136,7 @@ jobs:
         id: lychee
         uses: lycheeverse/lychee-action@v2.4.1
         with:
-          # Note: We pass the directory path, not a glob. 
-          # The TOML 'extensions = ["html"]' handles the filtering.
-          args: ${{ steps.lychee_args.outputs.args }} './${{ steps.vars.outputs.mkdocs_repo_name }}/site${{ inputs.root_dir }}'
+          args: ${{ steps.lychee_args.outputs.args }} './${{ steps.vars.outputs.mkdocs_repo_name }}/site/**/*.html'
 
       - name: Cleanup Local Server
         if: always()
