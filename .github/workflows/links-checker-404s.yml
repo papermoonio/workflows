@@ -46,7 +46,7 @@ jobs:
         run: |
           selected="${{ github.event.inputs.selected_project || 'All' }}"
           # NOTE: "exclude_paths" is passed as a JSON array.
-          # The logic below will convert "pt" into regex like "(^|/)pt/".
+          # The Python script in the next job will convert "pt" into regex "(?:^|/)pt/".
           all_projects=$(jq -n '
             [
               { "mkdocs_repo": "papermoonio/kluster-mkdocs", "docs_repo": "kluster-ai/docs", "mkdocs_repo_name": "kluster-mkdocs", "docs_repo_name": "kluster-docs", "root_dir": "", "label": "kluster.ai", "exclude_paths": [] },
@@ -165,73 +165,79 @@ jobs:
         id: lychee_cfg
         shell: bash
         run: |
-          set -euo pipefail
+          # Use Python to generate TOML to avoid Bash escaping/quoting issues
+          python3 - <<'EOF'
+          import json
+          import os
+          import re
 
-          # Get Site URL from previous step for remapping
-          BASE_URL="${{ steps.mkdocs_cfg.outputs.site_url }}"
-          # Clean trailing slash just in case
-          BASE_URL="${BASE_URL%/}"
-          LOCAL_SERVER="http://localhost:8000"
-
-          # 1. Generate Base TOML Configuration
-          # REMOVED: verbose=true and no_progress=true (causes TOML errors)
-          cat > /tmp/lychee.ci.toml <<'TOML'
-          exclude_all_private = false
-          exclude_loopback = false
-          exclude_private = false
-          exclude_link_local = false
+          # Input Data
+          base_url = "${{ steps.mkdocs_cfg.outputs.site_url }}".rstrip('/')
+          local_server = "http://localhost:8000"
           
-          # Only parse HTML files
-          extensions = ["html"]
+          # Safely parse JSON array from Matrix
+          try:
+              exclude_paths_raw = json.loads('${{ toJson(matrix.exclude_paths) }}')
+          except Exception as e:
+              print(f"Error parsing exclude_paths: {e}")
+              exclude_paths_raw = []
 
-          include = [
-            '^http://localhost:8000',
-            '^http://127\.0\.0\.1:8000'
+          # Construct Regex List
+          exclude_regex = []
+          for path in exclude_paths_raw:
+              if not path: continue
+              # If it looks like a regex (has special chars), keep it as is
+              # Otherwise, wrap it to match a folder segment
+              if any(char in path for char in r"\.^$*+?()[]{}|"):
+                  exclude_regex.append(path)
+              else:
+                  # Matches "start of line OR /" + path + "/"
+                  # This ensures we match "/pt/" or "pt/" but not "opt/"
+                  clean_path = path.strip('/')
+                  exclude_regex.append(f"(?:^|/){clean_path}/")
+
+          # Build TOML Content
+          toml_lines = [
+              "exclude_all_private = false",
+              "exclude_loopback = false",
+              "exclude_private = false",
+              "exclude_link_local = false",
+              "extensions = ['html']",
+              "include = [",
+              "  '^http://localhost:8000',",
+              "  '^http://127\\.0\\.0\\.1:8000'",
+              "]",
+              "accept = [403, 429]",
+              "max_retries = 3",
+              "retry_wait_time = 10"
           ]
+
+          # Add Remap
+          if base_url:
+              toml_lines.append("remap = [")
+              toml_lines.append(f"  '{base_url}/ {local_server}/',")
+              toml_lines.append(f"  '{base_url} {local_server}'")
+              toml_lines.append("]")
+
+          # Add Excludes
+          if exclude_regex:
+              toml_lines.append("exclude_path = [")
+              for pattern in exclude_regex:
+                  # Python's repr() ensures safe string escaping for TOML
+                  toml_lines.append(f"  {repr(pattern)},")
+              toml_lines.append("]")
+
+          # Write to file
+          with open("/tmp/lychee.ci.toml", "w") as f:
+              f.write("\n".join(toml_lines))
           
-          # Treat these codes as valid to prevent flakes
-          accept = [403, 429]
-          max_retries = 3
-          retry_wait_time = 10
-          TOML
-
-          # 2. Append Remap Logic (Deployed URL -> Localhost)
-          if [[ -n "$BASE_URL" ]]; then
-            {
-              echo ""
-              echo "remap = ["
-              echo "  \"${BASE_URL}/ ${LOCAL_SERVER}/\","
-              echo "  \"${BASE_URL} ${LOCAL_SERVER}\""
-              echo "]"
-            } >> /tmp/lychee.ci.toml
-          fi
-
-          # 3. Append Exclude Paths (Dynamic Regex Generation)
-          # We use jq to parse the JSON array from the Matrix
-          echo '${{ toJson(matrix.exclude_paths) }}' | jq -r '.[]' > /tmp/exclusions_raw.txt || true
-
-          if [[ -s /tmp/exclusions_raw.txt ]]; then
-            echo "" >> /tmp/lychee.ci.toml
-            echo "exclude_path = [" >> /tmp/lychee.ci.toml
-
-            while IFS= read -r token; do
-              [[ -z "$token" ]] && continue
-
-              # If the token contains special regex characters, assume it's raw regex
-              if [[ "$token" =~ [/\.\^\$\*\+\?\(\)\[\]\{\}\|] ]]; then
-                pattern="$token"
-              else
-                # Otherwise, assume it's a simple folder name and wrap it in regex
-                pattern="(^|/)${token}/"
-              fi
-
-              echo "  \"${pattern}\"," >> /tmp/lychee.ci.toml
-            done < /tmp/exclusions_raw.txt
-
-            echo "]" >> /tmp/lychee.ci.toml
-          fi
-
+          EOF
+          
           echo "cfg=/tmp/lychee.ci.toml" >> "$GITHUB_OUTPUT"
+          
+          echo "::group::Generated Lychee Configuration"
+          cat /tmp/lychee.ci.toml
+          echo "::endgroup::"
 
       - name: Generate Link Checker Arguments
         id: lychee_args
@@ -241,8 +247,7 @@ jobs:
           
           ABS_SITE_PATH="$(pwd)/${{ matrix.mkdocs_repo_name }}/site"
           
-          # Base arguments using the generated config file
-          # ADDED: --verbose and --no-progress here as CLI flags
+          # We pass verbose/progress as CLI flags, avoiding the boolean/string TOML error
           ARGS="--config ${{ steps.lychee_cfg.outputs.cfg }} --root-dir $ABS_SITE_PATH --verbose --no-progress"
 
           # Check for .urlignore file
@@ -257,8 +262,7 @@ jobs:
         id: lychee
         uses: lycheeverse/lychee-action@v2.4.1
         with:
-          # Note: We pass the directory path, not a glob.
-          # The TOML 'extensions = ["html"]' handles the filtering.
+          # Note: We pass the directory path. The TOML 'extensions' handles filtering.
           args: ${{ steps.lychee_args.outputs.args }} './${{ matrix.mkdocs_repo_name }}/site/**/*.html'
           output: ./${{ matrix.mkdocs_repo_name }}/lychee-report.md
         continue-on-error: true
