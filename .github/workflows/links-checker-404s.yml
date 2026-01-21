@@ -45,16 +45,14 @@ jobs:
         shell: bash
         run: |
           selected="${{ github.event.inputs.selected_project || 'All' }}"
-          # NOTE: "exclude_paths" is passed as a JSON array.
-          # The Python script in the next job will convert "pt" into regex "(?:^|/)pt/".
           all_projects=$(jq -n '
             [
-              { "mkdocs_repo": "papermoonio/kluster-mkdocs", "docs_repo": "kluster-ai/docs", "mkdocs_repo_name": "kluster-mkdocs", "docs_repo_name": "kluster-docs", "root_dir": "", "label": "kluster.ai", "exclude_paths": [] },
-              { "mkdocs_repo": "papermoonio/polkadot-mkdocs", "docs_repo": "polkadot-developers/polkadot-docs", "mkdocs_repo_name": "polkadot-mkdocs", "docs_repo_name": "polkadot-docs", "root_dir": "", "label": "Polkadot", "exclude_paths": [] },
-              { "mkdocs_repo": "papermoonio/moonbeam-mkdocs", "docs_repo": "moonbeam-foundation/moonbeam-docs", "mkdocs_repo_name": "moonbeam-mkdocs", "docs_repo_name": "moonbeam-docs", "root_dir": "", "label": "Moonbeam", "exclude_paths": [] },
-              { "mkdocs_repo": "papermoonio/datahaven-mkdocs", "docs_repo": "datahaven-xyz/datahaven-docs", "mkdocs_repo_name": "datahaven-mkdocs", "docs_repo_name": "datahaven-docs", "root_dir": "", "label": "DataHaven", "exclude_paths": [] },
-              { "mkdocs_repo": "papermoonio/tanssi-mkdocs", "docs_repo": "moondance-labs/tanssi-docs", "mkdocs_repo_name": "tanssi-mkdocs", "docs_repo_name": "tanssi-docs", "root_dir": "", "label": "Tanssi", "exclude_paths": ["pt"] },
-              { "mkdocs_repo": "papermoonio/wormhole-mkdocs", "docs_repo": "wormhole-foundation/wormhole-docs", "mkdocs_repo_name": "wormhole-mkdocs", "docs_repo_name": "wormhole-docs", "root_dir": "/docs", "label": "Wormhole", "exclude_paths": [] }
+              { "mkdocs_repo": "papermoonio/kluster-mkdocs", "docs_repo": "kluster-ai/docs", "mkdocs_repo_name": "kluster-mkdocs", "docs_repo_name": "kluster-docs", "root_dir": "", "label": "kluster.ai" },
+              { "mkdocs_repo": "papermoonio/polkadot-mkdocs", "docs_repo": "polkadot-developers/polkadot-docs", "mkdocs_repo_name": "polkadot-mkdocs", "docs_repo_name": "polkadot-docs", "root_dir": "", "label": "Polkadot" },
+              { "mkdocs_repo": "papermoonio/moonbeam-mkdocs", "docs_repo": "moonbeam-foundation/moonbeam-docs", "mkdocs_repo_name": "moonbeam-mkdocs", "docs_repo_name": "moonbeam-docs", "root_dir": "", "label": "Moonbeam" },
+              { "mkdocs_repo": "papermoonio/datahaven-mkdocs", "docs_repo": "datahaven-xyz/datahaven-docs", "mkdocs_repo_name": "datahaven-mkdocs", "docs_repo_name": "datahaven-docs", "root_dir": "", "label": "DataHaven" },
+              { "mkdocs_repo": "papermoonio/tanssi-mkdocs", "docs_repo": "moondance-labs/tanssi-docs", "mkdocs_repo_name": "tanssi-mkdocs", "docs_repo_name": "tanssi-docs", "root_dir": "", "label": "Tanssi" },
+              { "mkdocs_repo": "papermoonio/wormhole-mkdocs", "docs_repo": "wormhole-foundation/wormhole-docs", "mkdocs_repo_name": "wormhole-mkdocs", "docs_repo_name": "wormhole-docs", "root_dir": "/docs", "label": "Wormhole" }
             ]
           ')
           if [ "$selected" == "All" ]; then
@@ -122,17 +120,21 @@ jobs:
         run: |
           pip install --upgrade pip
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          # PyYAML is no longer strictly needed for the fix, but good to have
           pip install mkdocs-material mkdocs
+
+      # --- PYTHON SCRIPT REMOVED ---
 
       - name: Build Static Site
         working-directory: ${{ matrix.mkdocs_repo_name }}
+        env:
+          MKDOCS_STATIC_I18N_BUILD_ONLY: en
         run: mkdocs build -d site${{ matrix.root_dir }}
 
       - name: Initialize Local Web Server
         id: serve
         shell: bash
         run: |
-          set -euo pipefail
           ABS_SITE_ROOT="$(pwd)/${{ matrix.mkdocs_repo_name }}/site${{ matrix.root_dir }}"
           python3 -m http.server 8000 --directory "$ABS_SITE_ROOT" > /tmp/mkdocs_http.log 2>&1 &
           echo "pid=$!" >> "$GITHUB_OUTPUT"
@@ -165,92 +167,31 @@ jobs:
         id: lychee_cfg
         shell: bash
         run: |
-          # Use Python to generate TOML to avoid Bash escaping/quoting issues
-          python3 - <<'EOF'
-          import json
-          import os
-          import re
-
-          # Input Data
-          base_url = "${{ steps.mkdocs_cfg.outputs.site_url }}".rstrip('/')
-          local_server = "http://localhost:8000"
-          
-          # Safely parse JSON array from Matrix
-          try:
-              exclude_paths_raw = json.loads('${{ toJson(matrix.exclude_paths) }}')
-          except Exception as e:
-              print(f"Error parsing exclude_paths: {e}")
-              exclude_paths_raw = []
-
-          # Construct Regex List
-          exclude_regex = []
-          for path in exclude_paths_raw:
-              if not path: continue
-              # If it looks like a regex (has special chars), keep it as is
-              # Otherwise, wrap it to match a folder segment
-              if any(char in path for char in r"\.^$*+?()[]{}|"):
-                  exclude_regex.append(path)
-              else:
-                  # Matches "start of line OR /" + path + "/"
-                  # This ensures we match "/pt/" or "pt/" but not "opt/"
-                  clean_path = path.strip('/')
-                  exclude_regex.append(f"(?:^|/){clean_path}/")
-
-          # Build TOML Content
-          toml_lines = [
-              "exclude_all_private = false",
-              "exclude_loopback = false",
-              "exclude_private = false",
-              "exclude_link_local = false",
-              "extensions = ['html']",
-              "include = [",
-              "  '^http://localhost:8000',",
-              "  '^http://127\\.0\\.0\\.1:8000'",
-              "]",
-              "accept = [403, 429]",
-              "max_retries = 3",
-              "retry_wait_time = 10"
+          cat > /tmp/lychee.ci.toml <<'TOML'
+          exclude_all_private = false
+          exclude_loopback = false
+          exclude_private = false
+          exclude_link_local = false
+          include = [
+            '^http://localhost:8000',
+            '^http://127\.0\.0\.1:8000'
           ]
-
-          # Add Remap
-          if base_url:
-              toml_lines.append("remap = [")
-              toml_lines.append(f"  '{base_url}/ {local_server}/',")
-              toml_lines.append(f"  '{base_url} {local_server}'")
-              toml_lines.append("]")
-
-          # Add Excludes
-          if exclude_regex:
-              toml_lines.append("exclude_path = [")
-              for pattern in exclude_regex:
-                  # Python's repr() ensures safe string escaping for TOML
-                  toml_lines.append(f"  {repr(pattern)},")
-              toml_lines.append("]")
-
-          # Write to file
-          with open("/tmp/lychee.ci.toml", "w") as f:
-              f.write("\n".join(toml_lines))
-          
-          EOF
-          
+          TOML
           echo "cfg=/tmp/lychee.ci.toml" >> "$GITHUB_OUTPUT"
-          
-          echo "::group::Generated Lychee Configuration"
-          cat /tmp/lychee.ci.toml
-          echo "::endgroup::"
 
       - name: Generate Link Checker Arguments
         id: lychee_args
         shell: bash
         run: |
-          set -euo pipefail
-          
           ABS_SITE_PATH="$(pwd)/${{ matrix.mkdocs_repo_name }}/site"
-          
-          # We pass verbose/progress as CLI flags, avoiding the boolean/string TOML error
-          ARGS="--config ${{ steps.lychee_cfg.outputs.cfg }} --root-dir $ABS_SITE_PATH --verbose --no-progress"
+          LOCAL_SERVER="http://localhost:8000"
+          ARGS="--config ${{ steps.lychee_cfg.outputs.cfg }} --root-dir $ABS_SITE_PATH --verbose --no-progress --accept 429,403 --max-retries 3 --retry-wait-time 10"
 
-          # Check for .urlignore file
+          if [[ -n "${{ steps.mkdocs_cfg.outputs.site_url }}" ]]; then
+            BASE_URL="$(echo "${{ steps.mkdocs_cfg.outputs.site_url }}" | sed 's/\/$//')"
+            ARGS="$ARGS --remap \"$BASE_URL/ $LOCAL_SERVER/\" --remap \"$BASE_URL $LOCAL_SERVER\""
+          fi
+
           URLIGNORE_PATH="$(pwd)/${{ matrix.mkdocs_repo_name }}/.urlignore"
           if [[ -f "$URLIGNORE_PATH" ]]; then
             ARGS="$ARGS --exclude-file $URLIGNORE_PATH"
@@ -262,7 +203,6 @@ jobs:
         id: lychee
         uses: lycheeverse/lychee-action@v2.4.1
         with:
-          # Note: We pass the directory path. The TOML 'extensions' handles filtering.
           args: ${{ steps.lychee_args.outputs.args }} './${{ matrix.mkdocs_repo_name }}/site/**/*.html'
           output: ./${{ matrix.mkdocs_repo_name }}/lychee-report.md
         continue-on-error: true
