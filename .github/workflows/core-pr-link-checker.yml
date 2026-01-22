@@ -25,8 +25,12 @@ on:
         required: true
 
 jobs:
+  authorize-caller:
+    uses: ./.github/workflows/core-authorize-caller.yml
+    
   check-links:
     name: PR Link Validation
+    needs: authorize-caller
     runs-on: ubuntu-latest
     steps:
       - name: Set Workflow Variables
