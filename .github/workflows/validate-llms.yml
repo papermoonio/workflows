@@ -21,7 +21,11 @@ on:
         default: false
 
 jobs:
+  authorize-caller:
+    uses: ./.github/workflows/core-authorize-caller.yml
+    
   check-llms:
+    needs: authorize-caller
     runs-on: ubuntu-latest
 
     steps:
