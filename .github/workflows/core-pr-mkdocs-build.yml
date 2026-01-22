@@ -1,0 +1,77 @@
+name: General - PR MkDocs Build
+
+on:
+  workflow_call:
+    inputs:
+      mkdocs_repo:
+        required: true
+        type: string
+      docs_repo:
+        required: true
+        type: string
+      docs_checkout:
+        required: true
+        type: string
+      root_dir:
+        required: false
+        type: string
+        default: ""
+      python_version:
+        required: false
+        type: string
+        default: "3.10.12"
+      requirements_path:
+        required: false
+        type: string
+        default: "requirements.txt"
+
+permissions:
+  contents: read
+
+jobs:
+  build-mkdocs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up workflow variables
+        id: vars
+        run: |
+          echo "mkdocs_repo_name=$(basename '${{ inputs.mkdocs_repo }}')" >> $GITHUB_OUTPUT
+          echo "docs_repo_name=$(basename '${{ inputs.docs_repo }}')" >> $GITHUB_OUTPUT
+          echo "docs_checkout_path=$(basename '${{ inputs.docs_checkout }}')" >> $GITHUB_OUTPUT
+
+      # Checkout mkdocs skeleton 
+      - name: Checkout MkDocs Repo
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.mkdocs_repo }}
+          path: ${{ steps.vars.outputs.mkdocs_repo_name }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      # Checkout docs content at the PR HEAD 
+      - name: Checkout Docs Repo into MkDocs
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || inputs.docs_repo }}
+          ref: ${{ github.event.pull_request.head.sha || 'refs/heads/main' }}
+          path: ${{ steps.vars.outputs.mkdocs_repo_name }}/${{ steps.vars.outputs.docs_checkout_path }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python_version }}
+          cache: pip
+          cache-dependency-path: ${{ steps.vars.outputs.mkdocs_repo_name }}/${{ inputs.requirements_path }}
+
+      - name: Install dependencies
+        working-directory: ${{ steps.vars.outputs.mkdocs_repo_name }}
+        run: |
+          python -V
+          pip install --upgrade pip
+          pip install -r "${{ inputs.requirements_path }}"
+
+      - name: Build MkDocs site
+        working-directory: ${{ steps.vars.outputs.mkdocs_repo_name }}
+        run: mkdocs build -d "site${{ inputs.root_dir }}"

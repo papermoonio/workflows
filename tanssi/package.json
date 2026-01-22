@@ -1,0 +1,24 @@
+{
+  "name": "tanssi-credits-checker",
+  "version": "1.0.0",
+  "description": "Tanssi Network bot test utilities",
+  "type": "module",
+  "scripts": {
+    "check-credits": "tsx tools/mainnets/credit-checker.ts checkCredits"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@polkadot/api": "^14.3.1",
+    "@polkadot/util": "^13.2.3",
+    "@polkadot/util-crypto": "^13.2.3",
+    "yargs": "^17.7.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/yargs": "^17.0.33",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

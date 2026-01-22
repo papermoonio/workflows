@@ -1,0 +1,52 @@
+name: Tanssi - Appchain Funding Monitor
+
+on:
+  workflow_dispatch:
+    inputs:
+      network:
+        description: 'Network to check'
+        required: true
+        type: choice
+        options:
+          - tanssi
+          - dancelight
+          - flashbox
+        default: 'tanssi'
+      threshold:
+        description: 'Alert threshold in days (optional, uses chain config default if not specified)'
+        required: false
+        type: number
+  schedule:
+    # Run once a day at midnight UTC
+    - cron: '0 0 * * *'
+
+jobs:
+  check-credits:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: 'tanssi/package-lock.json'
+      
+      - name: Install dependencies
+        run: |
+          npm ci
+        working-directory: tanssi
+      
+      - name: Check credits
+        env:
+          TANSSI_APPCHAIN_FUNDING_MONITOR: ${{ secrets.TANSSI_APPCHAIN_FUNDING_MONITOR }}
+        working-directory: tanssi
+        run: |
+          if [ -n "${{ inputs.threshold }}" ]; then
+            npm run check-credits -- --network ${{ inputs.network || 'tanssi' }} --threshold ${{ inputs.threshold }}
+          else
+            npm run check-credits -- --network ${{ inputs.network || 'tanssi' }}
+          fi

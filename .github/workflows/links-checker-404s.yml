@@ -1,0 +1,245 @@
+name: 'General - Link Check for Documentation Sites'
+
+on:
+  schedule:
+    - cron: '0 12 * * 1-5'
+  workflow_dispatch:
+    inputs:
+      selected_project:
+        description: 'Select a specific project (optional)'
+        required: false
+        type: choice
+        options:
+          - All
+          - Tanssi
+          - Moonbeam
+          - DataHaven
+          - Wormhole
+          - kluster.ai
+          - Polkadot
+      create_issue:
+        description: 'Create GitHub Issue if broken links are found?'
+        required: false
+        type: boolean
+        default: true
+      mkdocs_branch:
+        description: 'MkDocs repo branch to use (only for specific project runs)'
+        required: false
+        type: string
+        default: ''
+      docs_branch:
+        description: 'Docs content repo branch to use (only for specific project runs)'
+        required: false
+        type: string
+        default: ''
+
+jobs:
+  generate-matrix:
+    name: Initialization
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - name: Define Project Matrix
+        id: set-matrix
+        shell: bash
+        run: |
+          selected="${{ github.event.inputs.selected_project || 'All' }}"
+          all_projects=$(jq -n '
+            [
+              { "mkdocs_repo": "papermoonio/kluster-mkdocs", "docs_repo": "kluster-ai/docs", "mkdocs_repo_name": "kluster-mkdocs", "docs_repo_name": "kluster-docs", "root_dir": "", "label": "kluster.ai" },
+              { "mkdocs_repo": "papermoonio/polkadot-mkdocs", "docs_repo": "polkadot-developers/polkadot-docs", "mkdocs_repo_name": "polkadot-mkdocs", "docs_repo_name": "polkadot-docs", "root_dir": "", "label": "Polkadot" },
+              { "mkdocs_repo": "papermoonio/moonbeam-mkdocs", "docs_repo": "moonbeam-foundation/moonbeam-docs", "mkdocs_repo_name": "moonbeam-mkdocs", "docs_repo_name": "moonbeam-docs", "root_dir": "", "label": "Moonbeam" },
+              { "mkdocs_repo": "papermoonio/datahaven-mkdocs", "docs_repo": "datahaven-xyz/datahaven-docs", "mkdocs_repo_name": "datahaven-mkdocs", "docs_repo_name": "datahaven-docs", "root_dir": "", "label": "DataHaven" },
+              { "mkdocs_repo": "papermoonio/tanssi-mkdocs", "docs_repo": "moondance-labs/tanssi-docs", "mkdocs_repo_name": "tanssi-mkdocs", "docs_repo_name": "tanssi-docs", "root_dir": "", "label": "Tanssi" },
+              { "mkdocs_repo": "papermoonio/wormhole-mkdocs", "docs_repo": "wormhole-foundation/wormhole-docs", "mkdocs_repo_name": "wormhole-mkdocs", "docs_repo_name": "wormhole-docs", "root_dir": "/docs", "label": "Wormhole" }
+            ]
+          ')
+          if [ "$selected" == "All" ]; then
+            filtered="$all_projects"
+          else
+            filtered=$(echo "$all_projects" | jq -c --arg sel "$selected" '[.[] | select(.label == $sel)]')
+          fi
+          echo "matrix=$(echo "$filtered" | jq -c '.')" >> "$GITHUB_OUTPUT"
+
+  check-links:
+    name: Check Links (${{ matrix.label }})
+    needs: generate-matrix
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJson(needs.generate-matrix.outputs.matrix) }}
+
+    steps:
+      - name: Authenticate GitHub Token
+        id: select_token
+        run: |
+          if [ "${{ matrix.label }}" == "Tanssi" ]; then
+            echo "token=${{ secrets.GH_404_CHECKER_TANSSI }}" >> $GITHUB_OUTPUT
+          else
+            echo "token=${{ secrets.GH_404_CHECKER }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Resolve Environment Refs
+        id: refs
+        shell: bash
+        run: |
+          selected="${{ github.event.inputs.selected_project || 'All' }}"
+          mkdocs_ref="${{ github.event.inputs.mkdocs_branch || '' }}"
+          docs_ref="${{ github.event.inputs.docs_branch || '' }}"
+          if [[ "${{ github.event_name }}" != "workflow_dispatch" || "$selected" == "All" ]]; then
+            mkdocs_ref=""; docs_ref=""
+          fi
+          echo "mkdocs_ref=$mkdocs_ref" >> "$GITHUB_OUTPUT"
+          echo "docs_ref=$docs_ref" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout Repositories
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ matrix.mkdocs_repo }}
+          ref: ${{ steps.refs.outputs.mkdocs_ref }}
+          path: ${{ matrix.mkdocs_repo_name }}
+
+      - name: Checkout Documentation Content
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ matrix.docs_repo }}
+          ref: ${{ steps.refs.outputs.docs_ref }}
+          fetch-depth: 0
+          path: '${{ matrix.mkdocs_repo_name}}/${{ matrix.docs_repo_name}}'
+
+      - name: Setup Python Environment
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Site Dependencies
+        working-directory: ${{ matrix.mkdocs_repo_name }}
+        run: |
+          pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          # PyYAML is no longer strictly needed for the fix, but good to have
+          pip install mkdocs-material mkdocs
+
+      # --- PYTHON SCRIPT REMOVED ---
+
+      - name: Build Static Site
+        working-directory: ${{ matrix.mkdocs_repo_name }}
+        env:
+          BUILD_ONLY_LOCALE: en
+        run: mkdocs build -d site${{ matrix.root_dir }}
+
+      - name: Initialize Local Web Server
+        id: serve
+        shell: bash
+        run: |
+          ABS_SITE_ROOT="$(pwd)/${{ matrix.mkdocs_repo_name }}/site${{ matrix.root_dir }}"
+          python3 -m http.server 8000 --directory "$ABS_SITE_ROOT" > /tmp/mkdocs_http.log 2>&1 &
+          echo "pid=$!" >> "$GITHUB_OUTPUT"
+
+          for i in {1..15}; do
+            if curl -s http://localhost:8000 > /dev/null; then
+              echo "✅ Server ready on port 8000"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "❌ Server failed to start." && exit 1
+
+      - name: Extract MkDocs Configuration
+        id: mkdocs_cfg
+        working-directory: ${{ matrix.mkdocs_repo_name }}
+        shell: bash
+        run: |
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          from mkdocs import config as mkdocs_config
+          try:
+              cfg = mkdocs_config.load_config("mkdocs.yml")
+              site_url = (cfg.get("site_url") or "").rstrip("/")
+              print(f"site_url={site_url}")
+          except Exception:
+              print(f"site_url=")
+          PY
+
+      - name: Configure Lychee Engine
+        id: lychee_cfg
+        shell: bash
+        run: |
+          cat > /tmp/lychee.ci.toml <<'TOML'
+          exclude_all_private = false
+          exclude_loopback = false
+          exclude_private = false
+          exclude_link_local = false
+          include = [
+            '^http://localhost:8000',
+            '^http://127\.0\.0\.1:8000'
+          ]
+          TOML
+          echo "cfg=/tmp/lychee.ci.toml" >> "$GITHUB_OUTPUT"
+
+      - name: Generate Link Checker Arguments
+        id: lychee_args
+        shell: bash
+        run: |
+          ABS_SITE_PATH="$(pwd)/${{ matrix.mkdocs_repo_name }}/site"
+          LOCAL_SERVER="http://localhost:8000"
+          ARGS="--config ${{ steps.lychee_cfg.outputs.cfg }} --root-dir $ABS_SITE_PATH --verbose --no-progress --accept 429,403 --max-retries 3 --retry-wait-time 10"
+
+          if [[ -n "${{ steps.mkdocs_cfg.outputs.site_url }}" ]]; then
+            BASE_URL="$(echo "${{ steps.mkdocs_cfg.outputs.site_url }}" | sed 's/\/$//')"
+            ARGS="$ARGS --remap \"$BASE_URL/ $LOCAL_SERVER/\" --remap \"$BASE_URL $LOCAL_SERVER\""
+          fi
+
+          URLIGNORE_PATH="$(pwd)/${{ matrix.mkdocs_repo_name }}/.urlignore"
+          if [[ -f "$URLIGNORE_PATH" ]]; then
+            ARGS="$ARGS --exclude-file $URLIGNORE_PATH"
+          fi
+
+          echo "args=$ARGS" >> $GITHUB_OUTPUT
+
+      - name: Link Check
+        id: lychee
+        uses: lycheeverse/lychee-action@v2.4.1
+        with:
+          args: ${{ steps.lychee_args.outputs.args }} './${{ matrix.mkdocs_repo_name }}/site/**/*.html'
+          output: ./${{ matrix.mkdocs_repo_name }}/lychee-report.md
+        continue-on-error: true
+
+      - name: Consolidate Results
+        id: lychee_status
+        shell: bash
+        run: |
+          if [[ "${{ steps.lychee.outcome }}" == "success" ]]; then
+            echo "has_broken_links=false" >> $GITHUB_OUTPUT
+          else
+            echo "has_broken_links=true" >> $GITHUB_OUTPUT
+          fi
+          
+          CREATE_ISSUE="false"
+          if [[ "${{ github.event_name }}" == "schedule" ]] || [[ "${{ github.event.inputs.create_issue }}" == "true" ]]; then
+            CREATE_ISSUE="true"
+          fi
+          echo "should_open_issue=$CREATE_ISSUE" >> $GITHUB_OUTPUT
+
+      - name: Cleanup Local Server
+        if: always()
+        run: kill ${{ steps.serve.outputs.pid }} || true
+
+      - name: Create Failure Issue
+        if: steps.lychee_status.outputs.has_broken_links == 'true' && steps.lychee_status.outputs.should_open_issue == 'true'
+        env:
+          GH_TOKEN: ${{ steps.select_token.outputs.token }}
+        run: |
+          REPORT=$(cat ./${{ matrix.mkdocs_repo_name }}/lychee-report.md)
+          gh issue create \
+            --repo "${{ matrix.docs_repo }}" \
+            --title "Broken Links Found: ${{ matrix.label }}" \
+            --body "### 🚨 Link Checker Report
+            **Project:** ${{ matrix.label }}
+            **Date:** $(date +'%Y-%m-%d')
+            **Workflow Run:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+            ---
+            $REPORT"
