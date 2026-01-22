@@ -1,0 +1,67 @@
+name: Core - Authorize Workflow Caller
+
+on:
+  workflow_call:
+    outputs:
+      authorized:
+        description: "Whether the calling repository owner is authorized"
+        value: ${{ jobs.authorize.outputs.authorized }}
+
+# No permissions needed to validate caller identity.
+permissions: {}
+
+jobs:
+  authorize:
+    runs-on: ubuntu-latest
+    outputs:
+      authorized: ${{ steps.check.outputs.authorized }}
+
+    steps:
+      - name: Validate caller organization/owner is allowlisted
+        id: check
+        shell: bash
+        env:
+          # Comma-separated list of allowed repository owners (orgs/users).
+          # Recommended to set at repo-level as a variable:
+          #   REUSABLE_WORKFLOW_ALLOWED_CALLER_OWNERS=org-a,org-b
+          ALLOWED_CALLER_OWNERS: ${{ vars.REUSABLE_WORKFLOW_ALLOWED_CALLER_OWNERS }}
+        run: |
+          set -euo pipefail
+
+          caller_owner="${GITHUB_REPOSITORY_OWNER}"
+
+          # In reusable workflows, GITHUB_REPOSITORY_OWNER refers to the *caller*.
+          # GITHUB_WORKFLOW_REF includes the called workflow reference like:
+          #   owner/repo/.github/workflows/workflow.yml@ref
+          callee_owner="$(echo "${GITHUB_WORKFLOW_REF}" | cut -d/ -f1)"
+
+          allowed_raw="${ALLOWED_CALLER_OWNERS:-}"
+          if [[ -z "$allowed_raw" ]]; then
+            # Safe default: allow only this workflows repository owner.
+            allowed_raw="$callee_owner"
+          else
+            # Always allow this workflows repository owner too.
+            allowed_raw="$allowed_raw,$callee_owner"
+          fi
+
+          authorized="false"
+          IFS=',' read -r -a owners <<< "$allowed_raw"
+          for o in "${owners[@]}"; do
+            o="$(echo "$o" | xargs)"
+            if [[ -n "$o" && "$o" == "$caller_owner" ]]; then
+              authorized="true"
+              break
+            fi
+          done
+
+          echo "authorized=$authorized" >> "$GITHUB_OUTPUT"
+
+          if [[ "$authorized" != "true" ]]; then
+            echo "❌ Unauthorized reusable workflow call." >&2
+            echo "Caller owner:  $caller_owner" >&2
+            echo "Allowed owners: $allowed_raw" >&2
+            echo "Set repo variable REUSABLE_WORKFLOW_ALLOWED_CALLER_OWNERS to add additional allowed orgs/users." >&2
+            exit 1
+          fi
+
+          echo "✅ Authorized caller: $caller_owner"
