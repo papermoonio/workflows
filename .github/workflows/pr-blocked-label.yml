@@ -11,7 +11,11 @@ on:
     types: [labeled, unlabeled, opened, edited, synchronize, reopened]
 
 jobs:
+  authorize-caller:
+    uses: ./.github/workflows/core-authorize-caller.yml
+
   check-label:
+    needs: authorize-caller
     runs-on: ubuntu-latest
     steps:
       - name: Check for whitelist labels
