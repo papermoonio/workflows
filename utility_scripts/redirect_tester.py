@@ -10,7 +10,7 @@ import argparse
 import json
 import os
 import sys
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 from urllib.parse import urlsplit
 
 
@@ -95,34 +95,55 @@ def _validate_redirects(
     hop_count: Dict[str, int] = {}
     looped: Dict[str, bool] = {}
 
-    def dfs(node: str) -> Tuple[int, bool]:
-        node_state = state.get(node, 0)
-        if node_state == 2:
-            return hop_count[node], looped[node]
-        if node_state == 1:
-            return 0, True
-
-        state[node] = 1
-        next_node = next_map.get(node)
-        if not next_node:
-            hop = 0
-            is_loop = False
-        else:
-            if state.get(next_node, 0) == 1:
-                hop = 1
-                is_loop = True
+    def dfs_iterative(start: str) -> None:
+        stack: List[Tuple[str, bool]] = [(start, False)]
+        while stack:
+            node, expanded = stack.pop()
+            node_state = state.get(node, 0)
+            if not expanded:
+                if node_state == 2:
+                    continue
+                if node_state == 1:
+                    looped[node] = True
+                    hop_count[node] = 0
+                    state[node] = 2
+                    continue
+                state[node] = 1
+                stack.append((node, True))
+                next_node = next_map.get(node)
+                if next_node and state.get(next_node, 0) != 2:
+                    stack.append((next_node, False))
             else:
-                next_hop, next_loop = dfs(next_node)
-                hop = 1 + next_hop
-                is_loop = next_loop
+                # If this node was already finalized as part of a loop
+                # (detected during forward phase), preserve that state
+                if state.get(node, 0) == 2:
+                    continue
 
-        state[node] = 2
-        hop_count[node] = hop
-        looped[node] = is_loop
-        return hop, is_loop
+                next_node = next_map.get(node)
+                if not next_node:
+                    hop = 0
+                    is_loop = False
+                else:
+                    next_state = state.get(next_node, 0)
+                    if next_state == 1:
+                        # next_node is still being visited - we're in a cycle
+                        hop = 1
+                        is_loop = True
+                    elif next_state == 2:
+                        # next_node is fully processed
+                        hop = 1 + hop_count.get(next_node, 0)
+                        is_loop = looped.get(next_node, False)
+                    else:
+                        # next_node was never visited (shouldn't happen in valid graph)
+                        hop = 0
+                        is_loop = False
+
+                state[node] = 2
+                hop_count[node] = hop
+                looped[node] = is_loop
 
     for src in normalized.keys():
-        dfs(src)
+        dfs_iterative(src)
 
     loops_count = sum(1 for src in normalized.keys() if looped.get(src, False))
     chains_count = sum(
@@ -137,6 +158,7 @@ def _validate_redirects(
         failures.append(f"Redirect chains longer than 1 hop: {chains_count}")
 
     site_dir = mkdocs_site_dir
+    existing_files: Set[str] = set()
     if not skip_static_check:
         if not site_dir:
             failures.append("Site dir is required unless --skip-static-check is set")
@@ -144,6 +166,15 @@ def _validate_redirects(
         elif not os.path.isdir(site_dir):
             failures.append(f"Site dir does not exist: {site_dir}")
             site_dir = None
+        else:
+            # Pre-scan site directory to avoid repeated os.path.isfile calls.
+            # Trade-off: Uses O(M) memory where M = number of files in site_dir.
+            # For typical documentation sites (thousands of files), this is ~1-2 MB.
+            # For extremely large sites, consider targeted os.path.exists checks instead.
+            for root, _, files in os.walk(site_dir):
+                for filename in files:
+                    full_path = os.path.join(root, filename)
+                    existing_files.add(full_path)
 
     def check_target(path: str) -> None:
         target_parts = urlsplit(path)
@@ -156,11 +187,11 @@ def _validate_redirects(
 
         if target_path.endswith("/"):
             candidate = os.path.join(site_dir, target_path.lstrip("/"), "index.html")
-            if not os.path.isfile(candidate):
+            if candidate not in existing_files:
                 failures.append(f"Missing target file: {candidate}")
         elif target_path.endswith(".html"):
             candidate = os.path.join(site_dir, target_path.lstrip("/"))
-            if not os.path.isfile(candidate):
+            if candidate not in existing_files:
                 failures.append(f"Missing target file: {candidate}")
         else:
             warnings.append(f"Target without trailing slash or .html: {target_path}")
