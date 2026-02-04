@@ -16,9 +16,6 @@ on:
         description: 'Alert threshold in days (optional, uses chain config default if not specified)'
         required: false
         type: number
-  schedule:
-    # Run once a day at midnight UTC
-    - cron: '0 0 * * *'
 
 jobs:
   check-credits:
