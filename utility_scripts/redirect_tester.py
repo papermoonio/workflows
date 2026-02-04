@@ -33,8 +33,11 @@ def _strip_query_fragment(path: str) -> str:
 
 
 def _load_redirects(path: str) -> List[Tuple[str, str]]:
-    with open(path, "r", encoding="utf-8") as handle:
-        data = json.load(handle)
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"Failed to load redirects from {path}: {exc}")
 
     redirects: List[Tuple[str, str]] = []
     if isinstance(data, dict):
@@ -76,6 +79,7 @@ def _validate_redirects(
         src_norm = _normalize_path(_strip_query_fragment(src))
         if src_norm in normalized:
             failures.append(f"Duplicate redirect from {src_norm}")
+            continue
         normalized[src_norm] = dst
 
     chains: List[str] = []
@@ -89,17 +93,19 @@ def _validate_redirects(
         visited = [src]
         hop = 0
         current = target_path
+        is_loop = False
         while current in normalized:
             hop += 1
             if current in visited:
                 loops.append(" -> ".join(visited + [current]))
+                is_loop = True
                 break
             visited.append(current)
             current_parts = urlsplit(normalized[current])
             if current_parts.scheme:
                 break
             current = _normalize_path(current_parts.path)
-        if hop > 1:
+        if hop > 1 and not is_loop:
             chains.append(" -> ".join(visited))
 
     if loops:
@@ -143,13 +149,14 @@ def _validate_redirects(
     report = {
         "failures": failures,
         "warnings": warnings,
-        "redirects": len(redirects),
+        "redirects_total": len(redirects),
+        "redirects_unique": len(normalized),
         "chains": len(chains),
         "loops": len(loops),
     }
 
     print("Redirect validation summary")
-    print(f"- redirects: {report['redirects']}")
+    print(f"- redirects: {report['redirects_total']} (unique: {report['redirects_unique']})")
     print(f"- failures: {len(failures)}")
     print(f"- warnings: {len(warnings)}")
     if failures:
@@ -209,6 +216,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     redirects = _load_redirects(redirects_path)
     if not redirects:
         print("No redirects found.")
+        return 0
 
     exit_code, report = _validate_redirects(
         redirects=redirects,
@@ -218,9 +226,14 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     if args.report:
         report_path = os.path.join(mkdocs_dir, "redirect_report.json")
-        with open(report_path, "w", encoding="utf-8") as handle:
-            json.dump(report, handle, indent=2)
-        print(f"Report written to: {report_path}")
+        try:
+            with open(report_path, "w", encoding="utf-8") as handle:
+                json.dump(report, handle, indent=2)
+        except OSError as exc:
+            print(f"Failed to write report to {report_path}: {exc}", file=sys.stderr)
+            return 2
+        else:
+            print(f"Report written to: {report_path}")
 
     return exit_code
 
