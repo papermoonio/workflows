@@ -82,36 +82,59 @@ def _validate_redirects(
             continue
         normalized[src_norm] = dst
 
-    chains: List[str] = []
-    loops: List[str] = []
-
+    next_map: Dict[str, Optional[str]] = {}
     for src, dst in normalized.items():
         target_parts = urlsplit(dst)
         if target_parts.scheme:
+            next_map[src] = None
             continue
         target_path = _normalize_path(target_parts.path)
-        visited = [src]
-        hop = 0
-        current = target_path
-        is_loop = False
-        while current in normalized:
-            hop += 1
-            if current in visited:
-                loops.append(" -> ".join(visited + [current]))
-                is_loop = True
-                break
-            visited.append(current)
-            current_parts = urlsplit(normalized[current])
-            if current_parts.scheme:
-                break
-            current = _normalize_path(current_parts.path)
-        if hop > 1 and not is_loop:
-            chains.append(" -> ".join(visited))
+        next_map[src] = target_path if target_path in normalized else None
 
-    if loops:
-        failures.append(f"Redirect loops detected: {len(loops)}")
-    if chains:
-        failures.append(f"Redirect chains longer than 1 hop: {len(chains)}")
+    state: Dict[str, int] = {}
+    hop_count: Dict[str, int] = {}
+    looped: Dict[str, bool] = {}
+
+    def dfs(node: str) -> Tuple[int, bool]:
+        node_state = state.get(node, 0)
+        if node_state == 2:
+            return hop_count[node], looped[node]
+        if node_state == 1:
+            return 0, True
+
+        state[node] = 1
+        next_node = next_map.get(node)
+        if not next_node:
+            hop = 0
+            is_loop = False
+        else:
+            if state.get(next_node, 0) == 1:
+                hop = 1
+                is_loop = True
+            else:
+                next_hop, next_loop = dfs(next_node)
+                hop = 1 + next_hop
+                is_loop = next_loop
+
+        state[node] = 2
+        hop_count[node] = hop
+        looped[node] = is_loop
+        return hop, is_loop
+
+    for src in normalized.keys():
+        dfs(src)
+
+    loops_count = sum(1 for src in normalized.keys() if looped.get(src, False))
+    chains_count = sum(
+        1
+        for src in normalized.keys()
+        if hop_count.get(src, 0) > 1 and not looped.get(src, False)
+    )
+
+    if loops_count:
+        failures.append(f"Redirect loops detected: {loops_count}")
+    if chains_count:
+        failures.append(f"Redirect chains longer than 1 hop: {chains_count}")
 
     site_dir = mkdocs_site_dir
     if not skip_static_check:
@@ -151,8 +174,8 @@ def _validate_redirects(
         "warnings": warnings,
         "redirects_total": len(redirects),
         "redirects_unique": len(normalized),
-        "chains": len(chains),
-        "loops": len(loops),
+        "chains": chains_count,
+        "loops": loops_count,
     }
 
     print("Redirect validation summary")
@@ -167,10 +190,10 @@ def _validate_redirects(
         print("Warnings:")
         for item in warnings:
             print(f"  - {item}")
-    if loops:
-        print(f"- loops: {len(loops)}")
-    if chains:
-        print(f"- chains > 1 hop: {len(chains)}")
+    if loops_count:
+        print(f"- loops: {loops_count}")
+    if chains_count:
+        print(f"- chains > 1 hop: {chains_count}")
     if failures:
         return 1, report
     return 0, report
