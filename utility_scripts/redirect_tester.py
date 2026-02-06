@@ -167,13 +167,15 @@ def _validate_redirects(
             failures.append(f"Site dir does not exist: {site_dir}")
             site_dir = None
         else:
+            # Normalize site_dir to absolute path for consistent comparisons
+            site_dir = os.path.abspath(site_dir)
             # Pre-scan site directory to avoid repeated os.path.isfile calls.
             # Trade-off: Uses O(M) memory where M = number of files in site_dir.
             # For typical documentation sites (thousands of files), this is ~1-2 MB.
             # For extremely large sites, consider targeted os.path.exists checks instead.
             for root, _, files in os.walk(site_dir):
                 for filename in files:
-                    full_path = os.path.join(root, filename)
+                    full_path = os.path.normpath(os.path.join(root, filename))
                     existing_files.add(full_path)
 
     def check_target(path: str) -> None:
@@ -186,19 +188,44 @@ def _validate_redirects(
             return
 
         if target_path.endswith("/"):
-            candidate = os.path.join(site_dir, target_path.lstrip("/"), "index.html")
+            candidate = os.path.normpath(
+                os.path.join(site_dir, target_path.lstrip("/"), "index.html")
+            )
             if candidate not in existing_files:
                 failures.append(f"Missing target file: {candidate}")
         elif target_path.endswith(".html"):
-            candidate = os.path.join(site_dir, target_path.lstrip("/"))
+            candidate = os.path.normpath(
+                os.path.join(site_dir, target_path.lstrip("/"))
+            )
             if candidate not in existing_files:
                 failures.append(f"Missing target file: {candidate}")
         else:
             warnings.append(f"Target without trailing slash or .html: {target_path}")
 
+    def check_source_not_exists(path: str) -> None:
+        """Verify that the redirect source does NOT exist in site (would be a conflict)."""
+        if not site_dir:
+            return
+
+        # Use _ensure_leading_slash (not _normalize_path) to preserve trailing slash
+        source_path = _ensure_leading_slash(urlsplit(path).path)
+        
+        if source_path.endswith("/"):
+            candidate = os.path.normpath(
+                os.path.join(site_dir, source_path.lstrip("/"), "index.html")
+            )
+        else:
+            candidate = os.path.normpath(
+                os.path.join(site_dir, source_path.lstrip("/"))
+            )
+
+        if candidate in existing_files:
+            failures.append(f"Redirect source exists as file (conflict): {candidate}")
+
     if not skip_static_check:
-        for _, dst in redirects:
+        for src, dst in redirects:
             check_target(dst)
+            check_source_not_exists(src)
 
     report = {
         "failures": failures,
