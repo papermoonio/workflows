@@ -24,6 +24,10 @@ on:
         required: false
         type: string
         default: "requirements.txt"
+      workflows_repo:
+        required: false
+        type: string
+        default: "papermoonio/workflows"
 
 permissions:
   contents: read
@@ -62,12 +66,42 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      # Checkout workflows repo to avoid raw.githubusercontent.com rate limits
+      - name: Checkout Workflows Repo
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.workflows_repo }}
+          path: workflows-repo
+          sparse-checkout: "*.txt"
+          persist-credentials: false
+
+      # Replace remote URL reference with local path to avoid 429 rate limits
+      - name: Use local workflows requirements
+        working-directory: ${{ steps.vars.outputs.mkdocs_repo_name }}
+        env:
+          REQ_PATH: ${{ inputs.requirements_path }}
+          WORKFLOWS_REPO: ${{ inputs.workflows_repo }}
+        run: |
+          if ! echo "$WORKFLOWS_REPO" | grep -qE '^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$'; then
+            echo "::error::Invalid workflows_repo format: must be 'owner/repo'"
+            exit 1
+          fi
+          LOCAL_REQ="${GITHUB_WORKSPACE}/workflows-repo/requirements.txt"
+          REMOTE_PREFIX="https://raw.githubusercontent.com/${WORKFLOWS_REPO}/"
+          if grep -qF "$REMOTE_PREFIX" "$REQ_PATH" 2>/dev/null; then
+            python3 -c "import sys,re; p,prefix,l=sys.argv[1:4]; c=open(p).read(); n=re.sub(r'-r\s+'+re.escape(prefix)+r'\S*requirements\.txt','-r '+l,c); open(p,'w').write(n); print('Replaced' if c!=n else 'No match found')" "$REQ_PATH" "$REMOTE_PREFIX" "$LOCAL_REQ"
+          else
+            echo "No remote workflows URL found in $REQ_PATH, skipping replacement"
+          fi
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: ${{ inputs.python_version }}
           cache: pip
-          cache-dependency-path: ${{ steps.vars.outputs.mkdocs_repo_name }}/${{ inputs.requirements_path }}
+          cache-dependency-path: |
+            ${{ steps.vars.outputs.mkdocs_repo_name }}/${{ inputs.requirements_path }}
+            workflows-repo/requirements.txt
 
       - name: Install dependencies
         working-directory: ${{ steps.vars.outputs.mkdocs_repo_name }}
