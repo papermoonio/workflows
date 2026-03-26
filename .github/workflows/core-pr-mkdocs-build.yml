@@ -72,7 +72,6 @@ jobs:
         with:
           repository: ${{ inputs.workflows_repo }}
           path: workflows-repo
-          sparse-checkout: "*.txt"
           persist-credentials: false
 
       # Replace remote URL reference with local path to avoid 429 rate limits

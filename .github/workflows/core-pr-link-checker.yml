@@ -64,7 +64,6 @@ jobs:
         with:
           repository: ${{ inputs.workflows_repo }}
           path: workflows-repo
-          sparse-checkout: "*.txt"
           persist-credentials: false
 
       - name: Use local workflows requirements
