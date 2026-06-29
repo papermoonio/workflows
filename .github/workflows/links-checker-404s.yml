@@ -12,8 +12,6 @@ on:
         options:
           - All
           - Moonbeam
-          - kluster.ai
-          - Polkadot
       create_issue:
         description: 'Create GitHub Issue if broken links are found?'
         required: false
