@@ -42,8 +42,6 @@ jobs:
           selected="${{ github.event.inputs.selected_project || 'All' }}"
           all_projects=$(jq -n '
             [
-              { "mkdocs_repo": "papermoonio/kluster-mkdocs", "docs_repo": "kluster-ai/docs", "mkdocs_repo_name": "kluster-mkdocs", "docs_repo_name": "kluster-docs", "root_dir": "", "label": "kluster.ai" },
-              { "mkdocs_repo": "papermoonio/polkadot-mkdocs", "docs_repo": "polkadot-developers/polkadot-docs", "mkdocs_repo_name": "polkadot-mkdocs", "docs_repo_name": "polkadot-docs", "root_dir": "", "label": "Polkadot" },
               { "mkdocs_repo": "papermoonio/moonbeam-mkdocs", "docs_repo": "moonbeam-foundation/moonbeam-docs", "mkdocs_repo_name": "moonbeam-mkdocs", "docs_repo_name": "moonbeam-docs", "root_dir": "", "label": "Moonbeam" }
             ]
           ')
